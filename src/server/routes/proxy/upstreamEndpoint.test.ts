@@ -28,7 +28,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
     fetchModelPricingCatalogMock.mockResolvedValue(null);
   });
 
-  it('uses responses -> messages -> chat for unknown platforms', async () => {
+  it('uses downstream-aligned endpoint priority for unknown platforms', async () => {
     const openaiOrder = await resolveUpstreamEndpointCandidates(
       {
         ...baseContext,
@@ -37,7 +37,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'gpt-5.3',
       'openai',
     );
-    expect(openaiOrder).toEqual(['responses', 'messages', 'chat']);
+    expect(openaiOrder).toEqual(['chat', 'messages', 'responses']);
 
     const claudeOrder = await resolveUpstreamEndpointCandidates(
       {
@@ -47,7 +47,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'gpt-5.3',
       'claude',
     );
-    expect(claudeOrder).toEqual(['responses', 'messages', 'chat']);
+    expect(claudeOrder).toEqual(['messages', 'chat', 'responses']);
 
     const responsesOrder = await resolveUpstreamEndpointCandidates(
       {
@@ -57,7 +57,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       'gpt-5.3',
       'responses',
     );
-    expect(responsesOrder).toEqual(['responses', 'messages', 'chat']);
+    expect(responsesOrder).toEqual(['responses', 'chat', 'messages']);
   });
 
   it('keeps explicit platform priority rules', async () => {

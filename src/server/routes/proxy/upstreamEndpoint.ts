@@ -381,9 +381,17 @@ function preferredEndpointOrder(downstreamFormat: EndpointPreference, sitePlatfo
     return ['messages'];
   }
 
-  // Unknown/generic upstreams: try the most expressive protocol first,
-  // then degrade to anthropic messages, and finally chat completions.
-  return ['responses', 'messages', 'chat'];
+  // Unknown/generic upstreams: prefer endpoint family that matches the
+  // downstream API surface, then degrade progressively.
+  if (downstreamFormat === 'responses') {
+    return ['responses', 'chat', 'messages'];
+  }
+
+  if (downstreamFormat === 'claude') {
+    return ['messages', 'chat', 'responses'];
+  }
+
+  return ['chat', 'messages', 'responses'];
 }
 
 export async function resolveUpstreamEndpointCandidates(
@@ -438,13 +446,15 @@ export async function resolveUpstreamEndpointCandidates(
 
     if (supported.size === 0) return preferred;
 
-    const filtered = preferred.filter((endpoint) => supported.has(endpoint));
-    if (filtered.length === 0) return preferred;
+    const firstSupported = preferred.find((endpoint) => supported.has(endpoint));
+    if (!firstSupported) return preferred;
 
-    // Keep non-catalog endpoints as best-effort fallbacks because some
-    // upstreams expose incomplete/incorrect endpoint metadata.
-    const fallback = preferred.filter((endpoint) => !filtered.includes(endpoint));
-    return [...filtered, ...fallback];
+    // Catalog metadata can be incomplete/inaccurate, so only use it to pick
+    // the first attempt. Keep downstream-driven fallback order unchanged.
+    return [
+      firstSupported,
+      ...preferred.filter((endpoint) => endpoint !== firstSupported),
+    ];
   } catch {
     return preferred;
   }
