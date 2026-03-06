@@ -114,20 +114,6 @@ jobs:
           name: metapi-dist-${{ github.sha }}
           path: .
 
-      - name: Prefetch AppImage tools
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          APPIMAGE_TOOLS_URL: https://github.com/electron-userland/electron-builder-binaries/releases/download/appimage%401.0.2/appimage-tools-runtime-20251108.tar.gz
-        run: |
-          set -euo pipefail
-          APPIMAGE_TOOLS_DIR="${{ runner.temp }}/.cache/appimage-tools"
-          if [ -x "$APPIMAGE_TOOLS_DIR/mksquashfs" ]; then
-            exit 0
-          fi
-          mkdir -p "$APPIMAGE_TOOLS_DIR"
-          curl -fL --retry 5 --retry-all-errors --retry-delay 5 "$APPIMAGE_TOOLS_URL" | tar -xz -C "$APPIMAGE_TOOLS_DIR"
-
       - name: Build desktop artifacts (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -145,7 +131,7 @@ jobs:
           if ($env:WIN_CSC_KEY_PASSWORD_INPUT) { $env:WIN_CSC_KEY_PASSWORD = $env:WIN_CSC_KEY_PASSWORD_INPUT }
           for ($attempt = 1; $attempt -le 2; $attempt++) {
             Write-Host "Desktop build attempt $attempt/2"
-            npm run package:desktop
+            npm run package:desktop -- --config.npmRebuild=false
             if ($LASTEXITCODE -eq 0) {
               break
             }
@@ -165,12 +151,11 @@ jobs:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/.cache/electron-builder
           ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
           npm_config_electron_builder_binaries_mirror: https://github.com/electron-userland/electron-builder-binaries/releases/download/
-          APPIMAGE_TOOLS_PATH: ${{ runner.temp }}/.cache/appimage-tools
         run: |
           set -euo pipefail
           for attempt in 1 2; do
             echo "Desktop build attempt ${attempt}/2"
-            if npm run package:desktop; then
+            if npm run package:desktop -- --config.npmRebuild=false; then
               break
             fi
             if [ "$attempt" -eq 2 ]; then
@@ -199,7 +184,7 @@ jobs:
           if [ -n "${APPLE_TEAM_ID_INPUT:-}" ]; then export APPLE_TEAM_ID="$APPLE_TEAM_ID_INPUT"; fi
           for attempt in 1 2; do
             echo "Desktop build attempt ${attempt}/2"
-            if npm run package:desktop; then
+            if npm run package:desktop -- --config.npmRebuild=false; then
               break
             fi
             if [ "$attempt" -eq 2 ]; then
