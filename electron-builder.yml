@@ -5,12 +5,11 @@ directories:
   output: release
 electronDist: node_modules/electron/dist
 icon: build/icon.png
+asar: false
 files:
   - dist/**/*
   - drizzle/**/*
   - package.json
-asarUnpack:
-  - node_modules/better-sqlite3/**/*
 mac:
   target:
     - dmg

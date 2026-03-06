@@ -24,8 +24,21 @@ import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
-import { normalize, resolve, sep } from 'path';
+import { fileURLToPath } from 'url';
+import { dirname, normalize, resolve, sep } from 'path';
 import { db, ensureProxyLogBillingDetailsColumn, runtimeDbDialect, schema, switchRuntimeDatabase, type RuntimeDbDialect } from './db/index.js';
+
+let sqliteMigrationsBootstrapped = false;
+
+async function ensureSqliteRuntimeMigrations() {
+  if (runtimeDbDialect !== 'sqlite') return;
+  const migrateModule = await import('./db/migrate.js');
+  if (sqliteMigrationsBootstrapped) {
+    migrateModule.runSqliteMigrations();
+    return;
+  }
+  sqliteMigrationsBootstrapped = true;
+}
 
 function toSettingsMap(rows: Array<{ key: string; value: string }>) {
   return new Map(rows.map((row) => [row.key, row.value]));
@@ -171,6 +184,9 @@ function applyRuntimeSettings(settingsMap: Map<string, string>) {
   }
 }
 
+// Ensure sqlite tables exist before reading runtime settings.
+await ensureSqliteRuntimeMigrations();
+
 // Load runtime config overrides from settings
 try {
   const initialRows = await db.select().from(schema.settings).all();
@@ -180,6 +196,7 @@ try {
   if (savedDbConfig && (savedDbConfig.dialect !== runtimeDbDialect || savedDbConfig.dbUrl !== activeDbUrl || savedDbConfig.ssl !== config.dbSsl)) {
     try {
       await switchRuntimeDatabase(savedDbConfig.dialect, savedDbConfig.dbUrl, savedDbConfig.ssl);
+      await ensureSqliteRuntimeMigrations();
       console.log(`Loaded runtime DB config from settings: ${savedDbConfig.dialect}`);
     } catch (error) {
       console.warn(`Failed to switch runtime DB from settings: ${(error as Error)?.message || 'unknown error'}`);
@@ -193,7 +210,9 @@ try {
   await repairStoredCreatedAtValues();
 
   console.log('Loaded runtime settings overrides');
-} catch { /* first run, table may not exist */ }
+} catch (error) {
+  console.warn(`Failed to load runtime settings overrides: ${(error as Error)?.message || 'unknown error'}`);
+}
 
 const app = Fastify({ logger: true });
 
@@ -227,7 +246,7 @@ await app.register(downstreamApiKeysRoutes);
 await app.register(proxyRoutes);
 
 // Serve static web frontend in production
-const webDir = resolve('dist/web');
+const webDir = resolve(dirname(fileURLToPath(import.meta.url)), '../web');
 if (existsSync(webDir)) {
   await app.register(fastifyStatic, {
     root: webDir,
