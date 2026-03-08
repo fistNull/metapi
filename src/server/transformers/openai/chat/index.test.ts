@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createClaudeDownstreamContext } from '../../shared/normalized.js';
+import { toTransformerMetadataRecord } from '../../shared/normalized.js';
 import { openAiChatTransformer } from './index.js';
 
 function parseSsePayloads(lines: string[]): Array<Record<string, unknown>> {
@@ -152,6 +153,32 @@ describe('openAiChatTransformer.outbound', () => {
       prompt_tokens_details: { cached_tokens: 3 },
       completion_tokens_details: { reasoning_tokens: 2 },
     });
+  });
+
+  it('consumes shared transformer metadata citations on openai-compatible final responses', () => {
+    const normalized = openAiChatTransformer.transformFinalResponse({
+      id: 'chatcmpl-shared-metadata',
+      model: 'gpt-5',
+      created: 123,
+      transformer_metadata: toTransformerMetadataRecord({
+        citations: [{ uri: 'https://shared.example/citation' }],
+        thoughtSignature: 'sig-final',
+        thoughtSignatures: ['sig-tool', 'sig-final'],
+        passthrough: {
+          cachedContent: 'cached/item-1',
+        },
+      }),
+      choices: [{
+        index: 0,
+        finish_reason: 'stop',
+        message: {
+          role: 'assistant',
+          content: 'hello',
+        },
+      }],
+    }, 'gpt-5');
+
+    expect((normalized as any).citations).toEqual(['https://shared.example/citation']);
   });
 
   it('serializes multi-choice chat responses with per-choice annotations, reasoning, tool calls, and shared citations', () => {

@@ -2,11 +2,14 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import {
+  fromTransformerMetadataRecord,
   normalizeStopReason,
   normalizeUpstreamFinalResponse,
   pullSseEventsWithDone,
   serializeFinalResponse,
+  toTransformerMetadataRecord,
   type NormalizedFinalResponse,
+  type TransformerMetadata,
 } from './normalized.js';
 
 describe('shared normalized helpers', () => {
@@ -141,6 +144,27 @@ describe('shared normalized helpers', () => {
         },
       }],
     });
+  });
+
+  it('round-trips shared transformer metadata through transport-safe records', () => {
+    const metadata: TransformerMetadata = {
+      promptCacheKey: 'cache-key',
+      truncation: 'auto',
+      serviceTier: 'priority',
+      citations: [{ uri: 'https://example.com/citation' }],
+      thoughtSignature: 'sig-final',
+      thoughtSignatures: ['sig-tool', 'sig-final'],
+      geminiSafetySettings: [{ category: 'SAFE', threshold: 'BLOCK_NONE' }],
+      geminiImageConfig: { aspectRatio: '16:9' },
+      groundingMetadata: [{ webSearchQueries: ['cats'] }],
+      usageMetadata: { totalTokenCount: 42 },
+      passthrough: {
+        cachedContent: 'cached/item-1',
+        toolConfig: { functionCallingConfig: { mode: 'ANY' } },
+      },
+    };
+
+    expect(fromTransformerMetadataRecord(toTransformerMetadataRecord(metadata))).toEqual(metadata);
   });
 
   it('normalizes known stop reasons', () => {

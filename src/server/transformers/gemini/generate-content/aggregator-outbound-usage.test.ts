@@ -5,6 +5,7 @@ import {
   createGeminiGenerateContentAggregateState,
 } from './aggregator.js';
 import {
+  extractTransformerMetadata,
   extractResponseMetadata,
   serializeGeminiAggregateResponse,
 } from './outbound.js';
@@ -236,6 +237,60 @@ describe('Gemini aggregate/outbound/usage', () => {
         totalTokenCount: 24,
         cachedContentTokenCount: 2,
         thoughtsTokenCount: 4,
+      },
+    });
+  });
+
+  it('projects Gemini richer metadata into the shared transformer metadata contract', () => {
+    const state = createGeminiGenerateContentAggregateState();
+    applyGeminiGenerateContentAggregate(state, {
+      responseId: 'resp-shared-meta',
+      modelVersion: 'gemini-3.1-pro-preview',
+      candidates: [
+        {
+          index: 0,
+          finishReason: 'STOP',
+          groundingMetadata: { webSearchQueries: ['cats'] },
+          citationMetadata: { citations: [{ uri: 'https://example.com/cats' }] },
+          content: {
+            parts: [
+              { text: 'reasoning', thought: true, thoughtSignature: 'sig-final' },
+              { text: 'answer' },
+            ],
+          },
+        },
+      ],
+      usageMetadata: {
+        promptTokenCount: 15,
+        candidatesTokenCount: 5,
+        totalTokenCount: 24,
+      },
+    });
+
+    const metadata = extractTransformerMetadata(state, {
+      cachedContent: 'cached/item-1',
+      safetySettings: [{ category: 'SAFE', threshold: 'BLOCK_NONE' }],
+      toolConfig: { functionCallingConfig: { mode: 'ANY' } },
+      generationConfig: {
+        imageConfig: { aspectRatio: '16:9' },
+      },
+    });
+
+    expect(metadata).toEqual({
+      citations: [{ citations: [{ uri: 'https://example.com/cats' }] }],
+      groundingMetadata: [{ webSearchQueries: ['cats'] }],
+      thoughtSignature: 'sig-final',
+      thoughtSignatures: ['sig-final'],
+      usageMetadata: {
+        promptTokenCount: 15,
+        candidatesTokenCount: 5,
+        totalTokenCount: 24,
+      },
+      geminiSafetySettings: [{ category: 'SAFE', threshold: 'BLOCK_NONE' }],
+      geminiImageConfig: { aspectRatio: '16:9' },
+      passthrough: {
+        cachedContent: 'cached/item-1',
+        toolConfig: { functionCallingConfig: { mode: 'ANY' } },
       },
     });
   });

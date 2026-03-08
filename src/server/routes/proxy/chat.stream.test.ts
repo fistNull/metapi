@@ -1826,7 +1826,7 @@ describe('chat proxy stream behavior', () => {
     expect(targetUrl).toContain('/v1/responses');
   });
 
-  it('prefers native /v1/responses for claude-family /v1/responses requests that opt into reasoning without an explicit include list', async () => {
+  it('prefers native /v1/responses for claude-family /v1/responses requests that opt into reasoning without injecting a generic default include', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 11, routeId: 22 },
       site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
@@ -1875,7 +1875,191 @@ describe('chat proxy stream behavior', () => {
     const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
     expect(targetUrl).toContain('/v1/responses');
     const forwardedBody = JSON.parse(options.body);
+    expect(forwardedBody.include).toBeUndefined();
+  });
+
+  it('keeps generic claude-family /v1/responses requests on the default messages-first order when codex headers are absent', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'msg_default_messages_first',
+      type: 'message',
+      model: 'upstream-gpt',
+      content: [{ type: 'text', text: 'messages endpoint selected by default' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: {
+        model: 'claude-haiku-4-5-20251001',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [targetUrl] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toContain('/v1/messages');
+  });
+
+  it('defaults encrypted reasoning include and prefers native /v1/responses for claude-family codex-surface requests even without reasoning config', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'resp_reasoning_default',
+      object: 'response',
+      model: 'upstream-gpt',
+      output_text: 'hello from responses upstream',
+      output: [
+        {
+          id: 'msg_reasoning_default',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{ type: 'output_text', text: 'hello from responses upstream' }],
+        },
+      ],
+      status: 'completed',
+      usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        'openai-beta': 'responses-2025-03-11',
+        'x-stainless-lang': 'typescript',
+        originator: 'codex_cli_rs',
+      },
+      payload: {
+        model: 'claude-haiku-4-5-20251001',
+        input: 'hello',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toContain('/v1/responses');
+    const forwardedBody = JSON.parse(options.body);
     expect(forwardedBody.include).toEqual(['reasoning.encrypted_content']);
+  });
+
+  it('keeps explicit empty include on claude-family codex-surface responses requests and stays on the default messages-first order', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'msg_explicit_empty_include',
+      type: 'message',
+      model: 'upstream-gpt',
+      content: [{ type: 'text', text: 'messages endpoint selected because include stayed empty' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        'openai-beta': 'responses-2025-03-11',
+        'x-stainless-lang': 'typescript',
+        originator: 'codex_cli_rs',
+      },
+      payload: {
+        model: 'claude-haiku-4-5-20251001',
+        input: 'hello',
+        reasoning: {
+          effort: 'high',
+          summary: 'auto',
+        },
+        include: [],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [targetUrl] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toContain('/v1/messages');
+  });
+
+  it('keeps explicit custom include on claude-family codex-surface responses requests and stays on the default messages-first order', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'sk-demo',
+      actualModel: 'upstream-gpt',
+    });
+
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      id: 'msg_explicit_custom_include',
+      type: 'message',
+      model: 'upstream-gpt',
+      content: [{ type: 'text', text: 'messages endpoint selected because custom include stayed explicit' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: {
+        'openai-beta': 'responses-2025-03-11',
+        'x-stainless-lang': 'typescript',
+        originator: 'codex_cli_rs',
+      },
+      payload: {
+        model: 'claude-haiku-4-5-20251001',
+        input: 'hello',
+        reasoning: {
+          effort: 'high',
+          summary: 'auto',
+        },
+        include: ['message.input_image.image_url'],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [targetUrl] = fetchMock.mock.calls[0] as [string, any];
+    expect(targetUrl).toContain('/v1/messages');
   });
 
   it('forces anyrouter platform to prefer /v1/messages even when catalog says openai', async () => {

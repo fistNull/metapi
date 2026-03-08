@@ -301,9 +301,10 @@ function sanitizeAnthropicContentBlock(item: Record<string, unknown>): Record<st
 
   if (type === 'thinking' || type === 'redacted_thinking' || type === 'reasoning') {
     const text = asTrimmedString(item.thinking ?? item.text ?? item.content ?? item.data);
-    if (!text) return null;
     const signature = type === 'redacted_thinking' ? undefined : resolveAnthropicThinkingSignature(item);
     if (signature === null) return null;
+    const hasThinkingCarrier = type !== 'redacted_thinking' && signature !== undefined;
+    if (!text && !hasThinkingCarrier) return null;
     const next: Record<string, unknown> = { ...item };
     if (type === 'redacted_thinking') {
       next.type = 'redacted_thinking';
@@ -772,6 +773,15 @@ export function convertOpenAiBodyToAnthropicMessagesBody(
     if (role !== 'assistant') return;
 
     const contentBlocks = convertOpenAiContentToAnthropicBlocks(item.content);
+    const reasoningCarrier = sanitizeAnthropicContentBlock({
+      type: 'thinking',
+      thinking: asTrimmedString(item.reasoning_content ?? item.reasoning),
+      reasoning_signature: item.reasoning_signature,
+      signature: item.signature,
+    });
+    if (reasoningCarrier) {
+      contentBlocks.unshift(reasoningCarrier);
+    }
 
     const rawToolCalls = Array.isArray(item.tool_calls) ? item.tool_calls : [];
     for (let index = 0; index < rawToolCalls.length; index += 1) {

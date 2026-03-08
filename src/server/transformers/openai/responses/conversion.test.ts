@@ -81,7 +81,31 @@ describe('sanitizeResponsesBodyForProxy', () => {
     });
   });
 
-  it('defaults encrypted reasoning include when reasoning is requested without an explicit include list', () => {
+  it('defaults encrypted reasoning include when reasoning is requested without an explicit include list on the codex responses surface', () => {
+    const result = sanitizeResponsesBodyForProxy(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        reasoning: {
+          effort: 'high',
+          summary: 'auto',
+        },
+      },
+      'gpt-5',
+      false,
+      { defaultEncryptedReasoningInclude: true },
+    );
+
+    expect(result).toMatchObject({
+      include: ['reasoning.encrypted_content'],
+      reasoning: {
+        effort: 'high',
+        summary: 'auto',
+      },
+    });
+  });
+
+  it('does not inject default include on generic responses requests when the codex surface default is disabled', () => {
     const result = sanitizeResponsesBodyForProxy(
       {
         model: 'gpt-5',
@@ -95,8 +119,68 @@ describe('sanitizeResponsesBodyForProxy', () => {
       false,
     );
 
+    expect(result.include).toBeUndefined();
+  });
+
+  it('defaults encrypted reasoning include on codex responses requests even without explicit reasoning config', () => {
+    const result = sanitizeResponsesBodyForProxy(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+      },
+      'gpt-5',
+      false,
+      { defaultEncryptedReasoningInclude: true },
+    );
+
     expect(result).toMatchObject({
       include: ['reasoning.encrypted_content'],
+    });
+  });
+
+  it('respects an explicit empty include list when the codex responses default is enabled', () => {
+    const result = sanitizeResponsesBodyForProxy(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        reasoning: {
+          effort: 'high',
+          summary: 'auto',
+        },
+        include: [],
+      },
+      'gpt-5',
+      false,
+      { defaultEncryptedReasoningInclude: true },
+    );
+
+    expect(result).toMatchObject({
+      include: [],
+      reasoning: {
+        effort: 'high',
+        summary: 'auto',
+      },
+    });
+  });
+
+  it('respects an explicit custom include list when the codex responses default is enabled', () => {
+    const result = sanitizeResponsesBodyForProxy(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        reasoning: {
+          effort: 'high',
+          summary: 'auto',
+        },
+        include: ['message.input_image.image_url'],
+      },
+      'gpt-5',
+      false,
+      { defaultEncryptedReasoningInclude: true },
+    );
+
+    expect(result).toMatchObject({
+      include: ['message.input_image.image_url'],
       reasoning: {
         effort: 'high',
         summary: 'auto',
@@ -294,6 +378,19 @@ describe('convertOpenAiBodyToResponsesBody', () => {
       user: 'user-789',
       service_tier: 'flex',
     });
+  });
+
+  it('does not inject default include when converting non-responses OpenAI input into Responses bodies', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'gpt-5',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      'gpt-5',
+      true,
+    );
+
+    expect(result.include).toBeUndefined();
   });
 
   it('maps OpenAI file-style content blocks into Responses input_file blocks', () => {
@@ -557,7 +654,7 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     });
   });
 
-  it('adds encrypted reasoning include for OpenAI-compatible fallback when reasoning options are present', () => {
+  it('does not inject default include for generic OpenAI-compatible fallback when reasoning options are present', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {
         model: 'gpt-5',
@@ -570,8 +667,100 @@ describe('convertResponsesBodyToOpenAiBody', () => {
       true,
     );
 
+    expect(result.include).toBeUndefined();
+  });
+
+  it('adds encrypted reasoning include for OpenAI-compatible fallback when the codex surface default is enabled', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        reasoning: {
+          effort: 'high',
+        },
+      },
+      'gpt-5',
+      true,
+      { defaultEncryptedReasoningInclude: true },
+    );
+
     expect(result).toMatchObject({
       include: ['reasoning.encrypted_content'],
+      reasoning: {
+        effort: 'high',
+      },
+    });
+  });
+
+  it('does not inject default include for generic OpenAI-compatible fallback when responses input omits include and reasoning', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+      },
+      'gpt-5',
+      true,
+    );
+
+    expect(result.include).toBeUndefined();
+  });
+
+  it('adds encrypted reasoning include for OpenAI-compatible fallback when the codex surface default is enabled even without explicit reasoning config', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+      },
+      'gpt-5',
+      true,
+      { defaultEncryptedReasoningInclude: true },
+    );
+
+    expect(result).toMatchObject({
+      include: ['reasoning.encrypted_content'],
+    });
+  });
+
+  it('respects an explicit empty include list for OpenAI-compatible fallback when the codex surface default is enabled', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        reasoning: {
+          effort: 'high',
+        },
+        include: [],
+      },
+      'gpt-5',
+      true,
+      { defaultEncryptedReasoningInclude: true },
+    );
+
+    expect(result).toMatchObject({
+      include: [],
+      reasoning: {
+        effort: 'high',
+      },
+    });
+  });
+
+  it('respects an explicit custom include list for OpenAI-compatible fallback when the codex surface default is enabled', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: 'hello',
+        reasoning: {
+          effort: 'high',
+        },
+        include: ['message.input_image.image_url'],
+      },
+      'gpt-5',
+      true,
+      { defaultEncryptedReasoningInclude: true },
+    );
+
+    expect(result).toMatchObject({
+      include: ['message.input_image.image_url'],
       reasoning: {
         effort: 'high',
       },

@@ -82,30 +82,17 @@ function normalizeIncludeList(value: unknown): unknown {
     .filter((item) => item.length > 0);
 }
 
-function hasReasoningRequest(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const relevantKeys = ['effort', 'budget_tokens', 'budgetTokens', 'max_tokens', 'maxTokens', 'summary'];
-  return relevantKeys.some((key) => {
-    const entry = value[key];
-    if (typeof entry === 'string') return entry.trim().length > 0;
-    return entry !== undefined && entry !== null;
-  });
+function hasExplicitInclude(body: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(body, 'include');
 }
 
-function ensureEncryptedReasoningInclude(body: Record<string, unknown>): void {
-  if (!hasReasoningRequest(body.reasoning)) return;
-
-  const normalizedInclude = normalizeIncludeList(body.include);
-  const includeList = Array.isArray(normalizedInclude) ? normalizedInclude : [];
-  const alreadyRequested = includeList.some((item) => (
-    typeof item === 'string' && item.trim().toLowerCase() === 'reasoning.encrypted_content'
-  ));
-  if (alreadyRequested) {
-    body.include = includeList;
+function applyDefaultResponsesInclude(body: Record<string, unknown>): void {
+  if (hasExplicitInclude(body)) {
+    body.include = normalizeIncludeList(body.include);
     return;
   }
 
-  body.include = [...includeList, 'reasoning.encrypted_content'];
+  body.include = ['reasoning.encrypted_content'];
 }
 
 function normalizeTextConfig(
@@ -137,7 +124,10 @@ function normalizeStreamOptions(rawStreamOptions: unknown): unknown {
 
 function normalizeResponsesRequestFieldParity(
   body: Record<string, unknown>,
-  options?: { verbositySource?: unknown },
+  options?: {
+    verbositySource?: unknown;
+    defaultEncryptedReasoningInclude?: boolean;
+  },
 ): Record<string, unknown> {
   const normalized: Record<string, unknown> = { ...body };
 
@@ -174,7 +164,9 @@ function normalizeResponsesRequestFieldParity(
   if (normalized.include !== undefined) {
     normalized.include = normalizeIncludeList(normalized.include);
   }
-  ensureEncryptedReasoningInclude(normalized);
+  if (options?.defaultEncryptedReasoningInclude) {
+    applyDefaultResponsesInclude(normalized);
+  }
 
   if (normalized.stream_options !== undefined) {
     normalized.stream_options = normalizeStreamOptions(normalized.stream_options);
@@ -376,6 +368,7 @@ export function sanitizeResponsesBodyForProxy(
   body: Record<string, unknown>,
   modelName: string,
   stream: boolean,
+  options?: { defaultEncryptedReasoningInclude?: boolean },
 ): Record<string, unknown> {
   let normalized = normalizeResponsesBodyForCompatibility({
     ...body,
@@ -401,6 +394,7 @@ export function sanitizeResponsesBodyForProxy(
 
   normalized = normalizeResponsesRequestFieldParity(normalized, {
     verbositySource: body.verbosity,
+    defaultEncryptedReasoningInclude: options?.defaultEncryptedReasoningInclude,
   });
 
   const sanitized: Record<string, unknown> = {};
@@ -717,8 +711,11 @@ export function convertResponsesBodyToOpenAiBody(
   body: Record<string, unknown>,
   modelName: string,
   stream: boolean,
+  options?: { defaultEncryptedReasoningInclude?: boolean },
 ): Record<string, unknown> {
-  const normalizedBody = normalizeResponsesRequestFieldParity(body);
+  const normalizedBody = normalizeResponsesRequestFieldParity(body, {
+    defaultEncryptedReasoningInclude: options?.defaultEncryptedReasoningInclude,
+  });
   const messages: Array<Record<string, unknown>> = [];
   const input = normalizedBody.input;
   let functionCallIndex = 0;

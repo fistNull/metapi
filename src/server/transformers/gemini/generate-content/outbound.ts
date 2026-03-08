@@ -3,6 +3,10 @@ import {
   createGeminiGenerateContentAggregateState,
   type GeminiGenerateContentAggregateState,
 } from './aggregator.js';
+import {
+  toTransformerMetadataRecord,
+  type TransformerMetadata,
+} from '../../shared/normalized.js';
 
 function normalizeBaseUrl(baseUrl: string): string {
   return (baseUrl || '').replace(/\/+$/, '');
@@ -176,14 +180,28 @@ function extractOrderedThoughtSignatures(
   };
 }
 
-function extractRequestSemantics(requestPayload: unknown): GeminiRecord {
+function ensurePassthrough(metadata: TransformerMetadata): Record<string, unknown> {
+  if (!metadata.passthrough) metadata.passthrough = {};
+  return metadata.passthrough;
+}
+
+function extractRequestSemantics(requestPayload: unknown): TransformerMetadata {
   if (!isRecord(requestPayload)) return {};
 
-  const metadata: GeminiRecord = {};
-  if (requestPayload.systemInstruction !== undefined) metadata.systemInstruction = cloneJsonValue(requestPayload.systemInstruction);
-  if (requestPayload.cachedContent !== undefined) metadata.cachedContent = cloneJsonValue(requestPayload.cachedContent);
-  if (requestPayload.safetySettings !== undefined) metadata.safetySettings = cloneJsonValue(requestPayload.safetySettings);
-  if (requestPayload.toolConfig !== undefined) metadata.toolConfig = cloneJsonValue(requestPayload.toolConfig);
+  const metadata: TransformerMetadata = {};
+  const passthrough = ensurePassthrough(metadata);
+  if (requestPayload.systemInstruction !== undefined) {
+    passthrough.systemInstruction = cloneJsonValue(requestPayload.systemInstruction);
+  }
+  if (requestPayload.cachedContent !== undefined) {
+    passthrough.cachedContent = cloneJsonValue(requestPayload.cachedContent);
+  }
+  if (requestPayload.safetySettings !== undefined) {
+    metadata.geminiSafetySettings = cloneJsonValue(requestPayload.safetySettings);
+  }
+  if (requestPayload.toolConfig !== undefined) {
+    passthrough.toolConfig = cloneJsonValue(requestPayload.toolConfig);
+  }
 
   const generationConfig = isRecord(requestPayload.generationConfig) ? requestPayload.generationConfig : null;
   if (generationConfig) {
@@ -207,7 +225,11 @@ function extractRequestSemantics(requestPayload: unknown): GeminiRecord {
     ];
     for (const key of preservedKeys) {
       if (generationConfig[key] !== undefined) {
-        metadata[key] = cloneJsonValue(generationConfig[key]);
+        if (key === 'imageConfig') {
+          metadata.geminiImageConfig = cloneJsonValue(generationConfig[key]);
+        } else {
+          passthrough[key] = cloneJsonValue(generationConfig[key]);
+        }
       }
     }
   }
@@ -226,8 +248,12 @@ function extractRequestSemantics(requestPayload: unknown): GeminiRecord {
       .filter((item) => Object.keys(item).length > 0);
 
     if (requestTools.length > 0) {
-      metadata.tools = requestTools;
+      passthrough.tools = requestTools;
     }
+  }
+
+  if (metadata.passthrough && Object.keys(metadata.passthrough).length <= 0) {
+    delete metadata.passthrough;
   }
 
   return metadata;
@@ -251,9 +277,9 @@ export function serializeGeminiAggregateResponse(
   return response;
 }
 
-export function extractResponseMetadata(payload: unknown, requestPayload?: unknown): GeminiRecord {
+export function extractTransformerMetadata(payload: unknown, requestPayload?: unknown): TransformerMetadata {
   const state = ensureAggregateState(payload);
-  const metadata: GeminiRecord = extractRequestSemantics(requestPayload);
+  const metadata = extractRequestSemantics(requestPayload);
 
   const citations = extractOrderedCandidateMetadata(state, 'citationMetadata');
   const groundingMetadata = extractOrderedCandidateMetadata(state, 'groundingMetadata');
@@ -273,10 +299,15 @@ export function extractResponseMetadata(payload: unknown, requestPayload?: unkno
   return metadata;
 }
 
+export function extractResponseMetadata(payload: unknown, requestPayload?: unknown): GeminiRecord {
+  return toTransformerMetadataRecord(extractTransformerMetadata(payload, requestPayload)) ?? {};
+}
+
 export const geminiGenerateContentOutbound = {
   resolveBaseUrl,
   resolveModelsUrl,
   resolveActionUrl,
+  extractTransformerMetadata,
   extractResponseMetadata,
   serializeAggregateResponse: serializeGeminiAggregateResponse,
 };

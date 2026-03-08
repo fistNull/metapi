@@ -358,6 +358,41 @@ describe('convertOpenAiBodyToAnthropicMessagesBody', () => {
     ]);
   });
 
+  it('preserves top-level reasoning_signature when rebuilding assistant thinking blocks for messages fallback', () => {
+    const body = convertOpenAiBodyToAnthropicMessagesBody(
+      {
+        model: 'gpt-5',
+        messages: [
+          {
+            role: 'assistant',
+            content: 'final answer',
+            reasoning_content: 'internal only',
+            reasoning_signature: 'metapi:anthropic-signature:sig-top-level-1',
+          },
+        ],
+      },
+      'claude-opus-4-6',
+      false,
+    );
+
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'thinking',
+            thinking: 'internal only',
+            signature: 'sig-top-level-1',
+          },
+          {
+            type: 'text',
+            text: 'final answer',
+          },
+        ],
+      },
+    ]);
+  });
+
   it('strips cache_control from thinking blocks and empty text blocks', () => {
     const body = convertOpenAiBodyToAnthropicMessagesBody(
       {

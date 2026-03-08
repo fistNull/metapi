@@ -7,6 +7,7 @@ import type {
   OpenAiChatToolCall,
   OpenAiChatUsageDetails,
 } from './model.js';
+import { fromTransformerMetadataRecord } from '../../shared/normalized.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -345,7 +346,9 @@ function extractCitationsFromPayload(
     citations.add(citation);
   }
 
-  const transformerMetadata = asRecord(payload.transformer_metadata) ?? asRecord(payload.transformerMetadata);
+  const transformerMetadata = fromTransformerMetadataRecord(
+    payload.transformer_metadata ?? payload.transformerMetadata,
+  );
   if (transformerMetadata) {
     for (const citation of dedupeCitations(transformerMetadata.citations)) {
       citations.add(citation);

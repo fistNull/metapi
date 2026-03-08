@@ -26,7 +26,6 @@ import { getProxyResourceOwner } from '../../middleware/auth.js';
 import {
   ProxyInputFileResolutionError,
   hasNonImageFileInputInOpenAiBody,
-  resolveOpenAiBodyInputFiles,
   resolveResponsesBodyInputFiles,
 } from '../../services/proxyInputFileResolver.js';
 
@@ -34,6 +33,21 @@ const MAX_RETRIES = 2;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
+}
+
+function normalizeIncludeList(value: unknown): string[] {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item) => item.length > 0);
+}
+
+function hasExplicitInclude(body: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(body, 'include');
 }
 
 function hasResponsesReasoningRequest(value: unknown): boolean {
@@ -46,17 +60,79 @@ function hasResponsesReasoningRequest(value: unknown): boolean {
   });
 }
 
+function carriesResponsesReasoningContinuity(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => carriesResponsesReasoningContinuity(item));
+  }
+  if (!isRecord(value)) return false;
+
+  const type = typeof value.type === 'string' ? value.type.trim().toLowerCase() : '';
+  if (type === 'reasoning') {
+    if (typeof value.encrypted_content === 'string' && value.encrypted_content.trim()) {
+      return true;
+    }
+    if (Array.isArray(value.summary) && value.summary.length > 0) {
+      return true;
+    }
+  }
+
+  if (typeof value.reasoning_signature === 'string' && value.reasoning_signature.trim()) {
+    return true;
+  }
+
+  return carriesResponsesReasoningContinuity(value.input)
+    || carriesResponsesReasoningContinuity(value.content);
+}
+
+function isCodexResponsesSurface(headers?: Record<string, unknown>): boolean {
+  if (!headers) return false;
+
+  const normalizeHeaderValue = (value: unknown): string => {
+    if (typeof value === 'string') return value.trim();
+    if (Array.isArray(value)) {
+      return value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .find((item) => item.length > 0) || '';
+    }
+    return '';
+  };
+
+  let sawOpenAiBeta = false;
+  let sawStainless = false;
+
+  for (const [rawKey, rawValue] of Object.entries(headers)) {
+    const key = rawKey.trim().toLowerCase();
+    const value = normalizeHeaderValue(rawValue);
+    if (!key || !value) continue;
+
+    if (key === 'originator' && value.toLowerCase() === 'codex_cli_rs') {
+      return true;
+    }
+    if (key === 'openai-beta') {
+      sawOpenAiBeta = true;
+    }
+    if (key.startsWith('x-stainless-')) {
+      sawStainless = true;
+    }
+  }
+
+  return sawOpenAiBeta || sawStainless;
+}
+
 function wantsNativeResponsesReasoning(body: unknown): boolean {
   if (!isRecord(body)) return false;
-
-  const include = Array.isArray(body.include)
-    ? body.include
-    : (typeof body.include === 'string' ? [body.include] : []);
-
-  return include.some((item) => (
-    typeof item === 'string'
-    && item.trim().toLowerCase() === 'reasoning.encrypted_content'
-  )) || hasResponsesReasoningRequest(body.reasoning);
+  const include = normalizeIncludeList(body.include);
+  if (include.some((item) => item.toLowerCase() === 'reasoning.encrypted_content')) {
+    return true;
+  }
+  if (carriesResponsesReasoningContinuity(body.input)) {
+    return true;
+  }
+  if (hasExplicitInclude(body)) {
+    return false;
+  }
+  return hasResponsesReasoningRequest(body.reasoning);
 }
 
 type UsageSummary = ReturnType<typeof parseProxyUsage>;
@@ -103,14 +179,19 @@ export async function responsesProxyRoute(app: FastifyInstance) {
       excludeChannelIds.push(selected.channel.id);
 
       const modelName = selected.actualModel || requestedModel;
-      const openAiBody = openAiResponsesTransformer.inbound.toOpenAiBody(body, modelName, isStream);
       const owner = getProxyResourceOwner(request);
-      let resolvedOpenAiBody = openAiBody;
-      let resolvedResponsesBody = body;
+      const defaultEncryptedReasoningInclude = isCodexResponsesSurface(
+        request.headers as Record<string, unknown>,
+      );
+      let normalizedResponsesBody = openAiResponsesTransformer.inbound.sanitizeProxyBody(
+        body,
+        modelName,
+        isStream,
+        { defaultEncryptedReasoningInclude },
+      );
       if (owner) {
         try {
-          resolvedOpenAiBody = await resolveOpenAiBodyInputFiles(openAiBody, owner);
-          resolvedResponsesBody = await resolveResponsesBodyInputFiles(body, owner);
+          normalizedResponsesBody = await resolveResponsesBodyInputFiles(normalizedResponsesBody, owner);
         } catch (error) {
           if (error instanceof ProxyInputFileResolutionError) {
             return reply.code(error.statusCode).send(error.payload);
@@ -118,8 +199,14 @@ export async function responsesProxyRoute(app: FastifyInstance) {
           throw error;
         }
       }
-      const hasNonImageFileInput = hasNonImageFileInputInOpenAiBody(resolvedOpenAiBody);
-      const prefersNativeResponsesReasoning = wantsNativeResponsesReasoning(resolvedResponsesBody);
+      const openAiBody = openAiResponsesTransformer.inbound.toOpenAiBody(
+        normalizedResponsesBody,
+        modelName,
+        isStream,
+        { defaultEncryptedReasoningInclude },
+      );
+      const hasNonImageFileInput = hasNonImageFileInputInOpenAiBody(openAiBody);
+      const prefersNativeResponsesReasoning = wantsNativeResponsesReasoning(normalizedResponsesBody);
       const endpointCandidates = await resolveUpstreamEndpointCandidates(
         {
           site: selected.site,
@@ -152,9 +239,9 @@ export async function responsesProxyRoute(app: FastifyInstance) {
               tokenValue: selected.tokenValue,
               sitePlatform: selected.site.platform,
               siteUrl: selected.site.url,
-              openaiBody: resolvedOpenAiBody,
+              openaiBody: openAiBody,
               downstreamFormat: 'responses',
-              responsesOriginalBody: resolvedResponsesBody,
+              responsesOriginalBody: normalizedResponsesBody,
               downstreamHeaders: request.headers as Record<string, unknown>,
             });
             const upstreamPath = (
