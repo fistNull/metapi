@@ -115,6 +115,7 @@ export async function statsRoutes(app: FastifyInstance) {
 
     const nowTs = Date.now();
     const last24hDate = formatUtcSqlDateTime(new Date(nowTs - 86400000));
+    const lastMinuteDate = formatUtcSqlDateTime(new Date(nowTs - 60_000));
     const last7dDate = getLocalRangeStartUtc(7);
     const recentProxyLogs = (await db.select({
       proxy_logs: proxyLogBaseFields,
@@ -145,6 +146,15 @@ export async function statsRoutes(app: FastifyInstance) {
       .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(and(gte(schema.proxyLogs.createdAt, last24hDate), eq(schema.sites.status, 'active')))
       .get();
+    const proxyPerformanceRow = await db.select({
+      total: sql<number>`count(*)`,
+      totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
+    })
+      .from(schema.proxyLogs)
+      .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
+      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(and(gte(schema.proxyLogs.createdAt, lastMinuteDate), eq(schema.sites.status, 'active')))
+      .get();
     const todaySpendRow = await db.select({
       todaySpend: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
     })
@@ -162,6 +172,8 @@ export async function statsRoutes(app: FastifyInstance) {
     const proxyFailed = Number(proxy24hRow?.failed || 0);
     const proxyTotal = Number(proxy24hRow?.total || 0);
     const totalTokens = Number(proxy24hRow?.totalTokens || 0);
+    const requestsPerMinute = Number(proxyPerformanceRow?.total || 0);
+    const tokensPerMinute = Number(proxyPerformanceRow?.totalTokens || 0);
     const totalUsed = Number(totalUsedRow?.totalUsed || 0);
     const todaySpend = Number(todaySpendRow?.todaySpend || 0);
     const todayReward = accounts.reduce((sum, account) => sum + estimateRewardWithTodayIncomeFallback({
@@ -182,6 +194,11 @@ export async function statsRoutes(app: FastifyInstance) {
       totalAccounts: accounts.length,
       todayCheckin: { success: checkinSuccess, failed: checkinFailed, total: todayCheckins.length },
       proxy24h: { success: proxySuccess, failed: proxyFailed, total: proxyTotal, totalTokens },
+      performance: {
+        windowSeconds: 60,
+        requestsPerMinute,
+        tokensPerMinute,
+      },
       modelAnalysis,
     };
   });

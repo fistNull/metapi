@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../api.js';
-import { getBrand, hashColor, BrandIcon, type BrandInfo, useIconCdn } from '../components/BrandIcon.js';
+import { BrandGlyph, getBrand, hashColor, BrandIcon, type BrandInfo } from '../components/BrandIcon.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
@@ -115,7 +115,6 @@ const PAGE_SIZES = [10, 20, 50];
 
 /* ---- component ---- */
 export default function Models() {
-  const cdn = useIconCdn();
   const toast = useToast();
   const [data, setData] = useState<ModelsMarketplaceResponse>({ models: [] });
   const [loading, setLoading] = useState(true);
@@ -365,13 +364,7 @@ export default function Models() {
                 onClick={() => setActiveBrand(activeBrand === brandName ? null : brandName)}
               >
                 <span className="filter-item-icon" style={{ background: 'var(--color-bg)', borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <img
-                    src={`${cdn}/${brand.icon.replace(/\./g, '-')}.png`}
-                    alt={brandName}
-                    style={{ width: 14, height: 14, objectFit: 'contain' }}
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                    loading="lazy"
-                  />
+                  <BrandGlyph brand={brand} size={14} fallbackText={brandName} />
                 </span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{brandName}</span>
                 <span className="filter-item-count">{count}</span>

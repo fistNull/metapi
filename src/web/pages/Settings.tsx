@@ -4,7 +4,7 @@ import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import ChangeKeyModal from '../components/ChangeKeyModal.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
-import { InlineBrandIcon, getBrand, useIconCdn } from '../components/BrandIcon.js';
+import { BrandGlyph, InlineBrandIcon, getBrand, normalizeBrandIconKey } from '../components/BrandIcon.js';
 import ModernSelect from '../components/ModernSelect.js';
 import {
   applyRoutingProfilePreset,
@@ -13,10 +13,13 @@ import {
 } from './helpers/routingProfiles.js';
 import { fuzzyMatch } from './helpers/fuzzySearch.js';
 import { clearAuthSession } from '../authSession.js';
+import { clearAppInstallationState } from '../appLocalState.js';
 import { tr } from '../i18n.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 const ROUTE_BRAND_ICON_PREFIX = 'brand:';
+const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
+const FACTORY_RESET_CONFIRM_SECONDS = 3;
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
 
 type RuntimeSettings = {
@@ -163,7 +166,7 @@ function parseBrandIconValue(raw: string | null | undefined): string | null {
   const normalized = (raw || '').trim();
   if (!normalized.startsWith(ROUTE_BRAND_ICON_PREFIX)) return null;
   const icon = normalized.slice(ROUTE_BRAND_ICON_PREFIX.length).trim();
-  return icon || null;
+  return normalizeBrandIconKey(icon);
 }
 
 function resolveRouteBrandSource(route: RouteSelectorItem): string {
@@ -173,7 +176,6 @@ function resolveRouteBrandSource(route: RouteSelectorItem): string {
 }
 
 export default function Settings() {
-  const iconCdn = useIconCdn();
   const [runtime, setRuntime] = useState<RuntimeSettings>({
     checkinCron: '0 8 * * *',
     balanceRefreshCron: '0 * * * *',
@@ -221,6 +223,10 @@ export default function Settings() {
   const downstreamModalPresence = useAnimatedVisibility(downstreamModalOpen, 220);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const selectorModalPresence = useAnimatedVisibility(selectorOpen, 220);
+  const [factoryResetOpen, setFactoryResetOpen] = useState(false);
+  const factoryResetPresence = useAnimatedVisibility(factoryResetOpen, 220);
+  const [factoryResetting, setFactoryResetting] = useState(false);
+  const [factoryResetSecondsLeft, setFactoryResetSecondsLeft] = useState(FACTORY_RESET_CONFIRM_SECONDS);
   const [selectorLoading, setSelectorLoading] = useState(false);
   const [selectorRoutes, setSelectorRoutes] = useState<RouteSelectorItem[]>([]);
   const [selectorModelSearch, setSelectorModelSearch] = useState('');
@@ -293,6 +299,18 @@ export default function Settings() {
       database: defaults.database,
     }));
   }, [migrationDialect]);
+
+  useEffect(() => {
+    if (!factoryResetOpen) {
+      setFactoryResetSecondsLeft(FACTORY_RESET_CONFIRM_SECONDS);
+      return;
+    }
+    setFactoryResetSecondsLeft(FACTORY_RESET_CONFIRM_SECONDS);
+    const timer = globalThis.setInterval(() => {
+      setFactoryResetSecondsLeft((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => globalThis.clearInterval(timer);
+  }, [factoryResetOpen]);
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
@@ -710,6 +728,24 @@ export default function Settings() {
       toast.error(err?.message || '清理占用失败');
     } finally {
       setClearingUsage(false);
+    }
+  };
+
+  const closeFactoryResetModal = () => {
+    if (factoryResetting) return;
+    setFactoryResetOpen(false);
+  };
+
+  const handleFactoryReset = async () => {
+    if (factoryResetSecondsLeft > 0 || factoryResetting) return;
+    setFactoryResetting(true);
+    try {
+      await api.factoryReset();
+      clearAppInstallationState(localStorage);
+      window.location.reload();
+    } catch (err: any) {
+      toast.error(err?.message || '重新初始化系统失败');
+      setFactoryResetting(false);
     }
   };
 
@@ -1297,6 +1333,19 @@ export default function Settings() {
           </div>
         </div>
 
+        <div className="card animate-slide-up stagger-7" style={{ padding: 20, border: '1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border))' }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10, color: 'var(--color-danger)' }}>危险操作</div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.8, marginBottom: 12 }}>
+            重新初始化系统会清空当前 metapi 使用中的全部数据库内容；若当前运行在外部 MySQL/Postgres，也会先清空该外部库中的 metapi 数据，然后切回默认 SQLite。
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.8, marginBottom: 14 }}>
+            完成后管理员 Token 会重置为 <code style={{ fontFamily: 'var(--font-mono)' }}>{FACTORY_RESET_ADMIN_TOKEN}</code>，当前会话会立即退出并刷新页面。
+          </div>
+          <button onClick={() => setFactoryResetOpen(true)} className="btn btn-danger">
+            重新初始化系统
+          </button>
+        </div>
+
         <div className="card animate-slide-up stagger-7" style={{ padding: 20 }}>
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>会话与安全</div>
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
@@ -1423,6 +1472,44 @@ export default function Settings() {
                   {downstreamSaving
                     ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</>
                     : (editingDownstreamId ? '更新 API Key' : '新增 API Key')}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+        return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
+      })()}
+      {factoryResetPresence.shouldRender && (() => {
+        const confirmLabel = factoryResetting
+          ? '重新初始化中...'
+          : (factoryResetSecondsLeft > 0
+            ? `确认重新初始化系统（${factoryResetSecondsLeft}s）`
+            : '确认重新初始化系统');
+        const modal = (
+          <div className={`modal-backdrop ${factoryResetPresence.isVisible ? '' : 'is-closing'}`.trim()} onClick={closeFactoryResetModal}>
+            <div
+              className={`modal-content ${factoryResetPresence.isVisible ? '' : 'is-closing'}`.trim()}
+              style={{ maxWidth: 720, border: '1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border))' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="modal-header" style={{ color: 'var(--color-danger)' }}>确认重新初始化系统</div>
+              <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ padding: 12, borderRadius: 'var(--radius-sm)', background: 'var(--color-danger-bg)', color: 'var(--color-danger)', fontSize: 12, lineHeight: 1.8 }}>
+                  这是不可逆操作。系统会清空当前 metapi 使用中的全部数据库内容，并在成功后立即退出当前登录状态。
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.9 }}>
+                  <div>• 当前若使用外部 MySQL/Postgres，也会先清空该外部库中的 metapi 数据。</div>
+                  <div>• 系统随后会强制切回默认 SQLite。</div>
+                  <div>• 管理员 Token 将重置为 <code style={{ fontFamily: 'var(--font-mono)' }}>{FACTORY_RESET_ADMIN_TOKEN}</code>。</div>
+                  <div>• 完成后会立即退出登录并刷新页面，回到当前首装初始状态。</div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button onClick={closeFactoryResetModal} disabled={factoryResetting} className="btn btn-ghost">取消</button>
+                <button onClick={handleFactoryReset} disabled={factoryResetting || factoryResetSecondsLeft > 0} className="btn btn-danger">
+                  {factoryResetting
+                    ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> {confirmLabel}</>
+                    : confirmLabel}
                 </button>
               </div>
             </div>
@@ -1619,12 +1706,11 @@ export default function Settings() {
                                     }}
                                   >
                                     {explicitBrandIcon ? (
-                                      <img
-                                        src={`${iconCdn}/${explicitBrandIcon.replace(/\./g, '-')}.png`}
+                                      <BrandGlyph
+                                        icon={explicitBrandIcon}
                                         alt={routeTitle(route)}
-                                        style={{ width: 18, height: 18, objectFit: 'contain' }}
-                                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                                        loading="lazy"
+                                        size={18}
+                                        fallbackText={routeTitle(route)}
                                       />
                                     ) : textIcon ? (
                                       textIcon

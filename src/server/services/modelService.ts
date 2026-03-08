@@ -5,6 +5,7 @@ import { ensureDefaultTokenForAccount, getPreferredAccountToken } from './accoun
 import { getCredentialModeFromExtraConfig, resolvePlatformUserId } from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
+import { clearAllRouteDecisionSnapshots } from './routeDecisionSnapshotStore.js';
 
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
@@ -358,6 +359,10 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (deleted > 0) {
       removedRoutes += deleted;
     }
+  }
+
+  if (createdRoutes > 0 || createdChannels > 0 || removedChannels > 0 || removedRoutes > 0) {
+    await clearAllRouteDecisionSnapshots();
   }
 
   invalidateTokenRouterCache();

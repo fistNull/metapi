@@ -20,9 +20,10 @@ vi.mock('../api.js', () => ({
 }));
 
 vi.mock('../components/BrandIcon.js', () => ({
+  BrandGlyph: () => null,
   InlineBrandIcon: () => null,
   getBrand: () => null,
-  useIconCdn: () => '',
+  normalizeBrandIconKey: (icon: string) => icon,
 }));
 
 function collectText(node: ReactTestInstance): string {

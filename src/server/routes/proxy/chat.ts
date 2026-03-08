@@ -9,19 +9,7 @@ import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { resolveProxyUrlForSite, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
-import {
-  type DownstreamFormat,
-  createStreamTransformContext,
-  createClaudeDownstreamContext,
-  parseDownstreamChatRequest,
-  pullSseEventsWithDone,
-  normalizeUpstreamStreamEvent,
-  serializeNormalizedStreamEvent,
-  serializeStreamDone,
-  normalizeUpstreamFinalResponse,
-  serializeFinalResponse,
-  buildSyntheticOpenAiChunks,
-} from './chatFormats.js';
+import { type DownstreamFormat } from '../../transformers/shared/normalized.js';
 import {
   buildMinimalJsonHeadersForCompatibility,
   buildUpstreamEndpointRequest,
@@ -38,19 +26,16 @@ import { composeProxyLogMessage } from './logPathMeta.js';
 import { executeEndpointFlow, withUpstreamPath } from './endpointFlow.js';
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveProxyLogBilling } from './proxyBilling.js';
+import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
+import {
+  anthropicMessagesTransformer,
+  isAnthropicRawSseEventName,
+  serializeAnthropicFinalAsStream,
+  serializeAnthropicRawSseEvent,
+  syncAnthropicRawStreamStateFromEvent,
+} from '../../transformers/anthropic/messages/index.js';
 
 const MAX_RETRIES = 2;
-const CLAUDE_SSE_EVENT_NAMES = new Set([
-  'message_start',
-  'content_block_start',
-  'content_block_delta',
-  'content_block_stop',
-  'message_delta',
-  'message_stop',
-  'ping',
-  'error',
-]);
-
 function shouldRetryClaudeMessagesWithNormalizedBody(
   downstreamFormat: DownstreamFormat,
   endpointPath: string,
@@ -71,53 +56,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
 
-function isClaudeSseEventName(value: unknown): value is string {
-  return typeof value === 'string' && CLAUDE_SSE_EVENT_NAMES.has(value);
-}
-
-function serializeRawSseEvent(event: string, data: string): string {
-  const dataLines = data.split('\n').map((line) => `data: ${line}`).join('\n');
-  if (event) {
-    return `event: ${event}\n${dataLines}\n\n`;
-  }
-  return `${dataLines}\n\n`;
-}
-
-function syncClaudeStreamStateFromRawEvent(
-  eventName: string,
-  parsedPayload: unknown,
-  streamContext: { id: string; model: string },
-  claudeContext: { messageStarted: boolean; contentBlockStarted: boolean; doneSent: boolean },
-) {
-  if (eventName === 'message_start') {
-    claudeContext.messageStarted = true;
-    if (isRecord(parsedPayload) && isRecord(parsedPayload.message)) {
-      const message = parsedPayload.message;
-      if (typeof message.id === 'string' && message.id.trim().length > 0) {
-        streamContext.id = message.id;
-      }
-      if (typeof message.model === 'string' && message.model.trim().length > 0) {
-        streamContext.model = message.model;
-      }
-    }
-    return;
-  }
-
-  if (eventName === 'content_block_start') {
-    claudeContext.contentBlockStarted = true;
-    return;
-  }
-
-  if (eventName === 'content_block_stop') {
-    claudeContext.contentBlockStarted = false;
-    return;
-  }
-
-  if (eventName === 'message_stop') {
-    claudeContext.doneSent = true;
-  }
-}
-
 export async function chatProxyRoute(app: FastifyInstance) {
   app.post('/v1/chat/completions', async (request: FastifyRequest, reply: FastifyReply) =>
     handleChatProxyRequest(request, reply, 'openai'));
@@ -133,7 +71,10 @@ async function handleChatProxyRequest(
   reply: FastifyReply,
   downstreamFormat: DownstreamFormat,
 ) {
-  const parsedRequest = parseDownstreamChatRequest(request.body, downstreamFormat);
+  const downstreamTransformer = downstreamFormat === 'claude'
+    ? anthropicMessagesTransformer
+    : openAiChatTransformer;
+  const parsedRequest = downstreamTransformer.transformRequest(request.body);
   if (parsedRequest.error) {
     return reply.code(parsedRequest.error.statusCode).send(parsedRequest.error.payload);
   }
@@ -345,8 +286,8 @@ async function handleChatProxyRequest(
         reply.raw.setHeader('Connection', 'keep-alive');
         reply.raw.setHeader('X-Accel-Buffering', 'no');
 
-        const streamContext = createStreamTransformContext(modelName);
-        const claudeContext = createClaudeDownstreamContext();
+        const streamContext = downstreamTransformer.createStreamContext(modelName);
+        const claudeContext = anthropicMessagesTransformer.createDownstreamContext();
         let parsedUsage: ReturnType<typeof parseProxyUsage> = {
           promptTokens: 0,
           completionTokens: 0,
@@ -363,38 +304,24 @@ async function handleChatProxyRequest(
         };
 
         const writeDone = () => {
-          writeLines(serializeStreamDone(downstreamFormat, streamContext, claudeContext));
+          writeLines(downstreamTransformer.serializeDone(streamContext, claudeContext));
         };
 
         const emitNormalizedFinalAsStream = (upstreamData: unknown, fallbackText = '') => {
-          const normalizedFinal = normalizeUpstreamFinalResponse(upstreamData, modelName, fallbackText);
+          const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, fallbackText);
           streamContext.id = normalizedFinal.id;
           streamContext.model = normalizedFinal.model;
           streamContext.created = normalizedFinal.created;
 
           if (downstreamFormat === 'openai') {
-            const syntheticChunks = buildSyntheticOpenAiChunks(normalizedFinal);
+            const syntheticChunks = openAiChatTransformer.buildSyntheticChunks(normalizedFinal);
             for (const chunk of syntheticChunks) {
               reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
             }
             return;
           }
 
-          writeLines(serializeNormalizedStreamEvent('claude', { role: 'assistant' }, streamContext, claudeContext));
-
-          const combinedText = [normalizedFinal.reasoningContent, normalizedFinal.content]
-            .filter((item) => typeof item === 'string' && item.trim().length > 0)
-            .join('\n\n');
-
-          if (combinedText) {
-            writeLines(serializeNormalizedStreamEvent('claude', {
-              contentDelta: combinedText,
-            }, streamContext, claudeContext));
-          }
-
-          writeLines(serializeNormalizedStreamEvent('claude', {
-            finishReason: normalizedFinal.finishReason,
-          }, streamContext, claudeContext));
+          writeLines(serializeAnthropicFinalAsStream(normalizedFinal, streamContext, claudeContext));
         };
 
         const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
@@ -470,7 +397,7 @@ async function handleChatProxyRequest(
         let shouldTerminateEarly = false;
 
         const consumeSseBuffer = (incoming: string): string => {
-          const pulled = pullSseEventsWithDone(incoming);
+          const pulled = downstreamTransformer.pullSseEvents(incoming);
           for (const eventBlock of pulled.events) {
             if (eventBlock.data === '[DONE]') {
               writeDone();
@@ -487,23 +414,22 @@ async function handleChatProxyRequest(
 
             if (parsedPayload && typeof parsedPayload === 'object') {
               parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(parsedPayload));
-
               if (downstreamFormat === 'claude') {
                 const payloadType = (isRecord(parsedPayload) && typeof parsedPayload.type === 'string')
                   ? parsedPayload.type
                   : '';
-                const claudeEventName = isClaudeSseEventName(eventBlock.event)
+                const claudeEventName = isAnthropicRawSseEventName(eventBlock.event)
                   ? eventBlock.event
-                  : (isClaudeSseEventName(payloadType) ? payloadType : '');
+                  : (isAnthropicRawSseEventName(payloadType) ? payloadType : '');
 
                 if (claudeEventName) {
-                  syncClaudeStreamStateFromRawEvent(
+                  syncAnthropicRawStreamStateFromEvent(
                     claudeEventName,
                     parsedPayload,
                     streamContext,
                     claudeContext,
                   );
-                  reply.raw.write(serializeRawSseEvent(claudeEventName, eventBlock.data));
+                  reply.raw.write(serializeAnthropicRawSseEvent(claudeEventName, eventBlock.data));
                   if (claudeContext.doneSent) {
                     shouldTerminateEarly = true;
                     break;
@@ -511,19 +437,13 @@ async function handleChatProxyRequest(
                   continue;
                 }
               }
-
-              const normalizedEvent = normalizeUpstreamStreamEvent(parsedPayload, streamContext, modelName);
-              writeLines(serializeNormalizedStreamEvent(
-                downstreamFormat,
-                normalizedEvent,
-                streamContext,
-                claudeContext,
-              ));
+              const normalizedEvent = downstreamTransformer.transformStreamEvent(parsedPayload, streamContext, modelName);
+              writeLines(downstreamTransformer.serializeStreamEvent(normalizedEvent, streamContext, claudeContext));
               if (downstreamFormat === 'claude' && claudeContext.doneSent) {
                 shouldTerminateEarly = true;
                 break;
               }
-              if (downstreamFormat === 'openai' && streamContext.doneSent) {
+              if (streamContext.doneSent) {
                 shouldTerminateEarly = true;
                 break;
               }
@@ -533,7 +453,7 @@ async function handleChatProxyRequest(
             if (downstreamFormat === 'openai') {
               reply.raw.write(`data: ${eventBlock.data}\n\n`);
             } else {
-              writeLines(serializeNormalizedStreamEvent('claude', {
+              writeLines(anthropicMessagesTransformer.serializeStreamEvent({
                 contentDelta: eventBlock.data,
               }, streamContext, claudeContext));
               if (claudeContext.doneSent) {
@@ -628,8 +548,8 @@ async function handleChatProxyRequest(
 
       const latency = Date.now() - startTime;
       const parsedUsage = parseProxyUsage(upstreamData);
-      const normalizedFinal = normalizeUpstreamFinalResponse(upstreamData, modelName, rawText);
-      const downstreamResponse = serializeFinalResponse(downstreamFormat, normalizedFinal, parsedUsage);
+      const normalizedFinal = downstreamTransformer.transformFinalResponse(upstreamData, modelName, rawText);
+      const downstreamResponse = downstreamTransformer.serializeFinalResponse(normalizedFinal, parsedUsage);
 
       const resolvedUsage = await resolveProxyUsageWithSelfLogFallback({
         site: selected.site,

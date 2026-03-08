@@ -23,6 +23,7 @@ import { startProxyLogRetentionService, stopProxyLogRetentionService } from './s
 import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
+import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -222,6 +223,7 @@ try {
   await ensureProxyLogBillingDetailsColumn();
   await repairStoredCreatedAtValues();
   await migrateSiteApiKeysToAccounts();
+  await ensureDefaultSitesSeeded();
 
   console.log('Loaded runtime settings overrides');
 } catch (error) {

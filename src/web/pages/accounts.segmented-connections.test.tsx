@@ -84,4 +84,33 @@ describe('Accounts segmented connections view', () => {
       root?.unmount();
     }
   });
+
+  it('uses existing-site guidance instead of asking to add a site when the segment is empty but sites exist', async () => {
+    apiMock.getAccounts.mockResolvedValue([]);
+    apiMock.getSites.mockResolvedValue([
+      { id: 10, name: 'Session Site', platform: 'new-api', status: 'active' },
+    ]);
+    apiMock.getAccountTokens.mockResolvedValue([]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const rendered = JSON.stringify(root.toJSON());
+      expect(rendered).toContain('暂无 Session 连接');
+      expect(rendered).toContain('请为现有站点添加 Session 连接');
+      expect(rendered).not.toContain('请先添加站点');
+    } finally {
+      root?.unmount();
+    }
+  });
 });

@@ -5,6 +5,12 @@ import SearchModal from './components/SearchModal.js';
 import NotificationPanel from './components/NotificationPanel.js';
 import { api } from './api.js';
 import { clearAuthSession, hasValidAuthSession, persistAuthSession } from './authSession.js';
+import {
+  FIRST_USE_DOC_REMINDER_KEY,
+  LEGACY_THEME_STORAGE_KEY,
+  THEME_MODE_STORAGE_KEY,
+  USER_PROFILE_STORAGE_KEY,
+} from './appLocalState.js';
 import { I18nProvider, useI18n } from './i18n.js';
 import { resolveLoginErrorMessage } from './loginError.js';
 import { SITE_DOCS_URL } from './docsLink.js';
@@ -32,10 +38,6 @@ type UserProfile = {
   avatarSeed: string;
   avatarStyle: string;
 };
-
-const THEME_MODE_STORAGE_KEY = 'theme_mode';
-const USER_PROFILE_STORAGE_KEY = 'user_profile';
-const FIRST_USE_DOC_REMINDER_KEY = 'metapi_first_use_docs_reminder_seen_v1';
 const DICEBEAR_STYLES = [
   'pixel-art',
   'pixel-art-neutral',
@@ -56,7 +58,7 @@ type DicebearStyle = typeof DICEBEAR_STYLES[number];
 function resolveStoredThemeMode(): ThemeMode {
   const saved = localStorage.getItem(THEME_MODE_STORAGE_KEY);
   if (saved === 'system' || saved === 'light' || saved === 'dark') return saved;
-  const legacy = localStorage.getItem('theme');
+  const legacy = localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
   if (legacy === 'light' || legacy === 'dark') return legacy;
   return 'system';
 }

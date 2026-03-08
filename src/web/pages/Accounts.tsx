@@ -197,18 +197,19 @@ export default function Accounts() {
   }, [activeSegment]);
 
   useEffect(() => {
-    if (activeSegment !== 'apikey' || !loaded) return;
+    if (activeSegment === 'tokens' || !loaded) return;
     const params = new URLSearchParams(location.search);
     const shouldOpenCreate = isTruthyFlag(params.get('create'));
     const requestedSiteId = parsePositiveInt(params.get('siteId'));
     if (!shouldOpenCreate || !requestedSiteId) return;
 
+    const credentialMode = activeSegment === 'apikey' ? 'apikey' : 'session';
     setShowAdd(true);
     setAddMode('token');
     setVerifyResult(null);
     setLoginForm(createLoginForm());
     setTokenForm({
-      ...createTokenForm('apikey'),
+      ...createTokenForm(credentialMode),
       siteId: requestedSiteId,
     });
 
@@ -1013,7 +1014,7 @@ export default function Accounts() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   <div className="info-tip">
-                    API Key 连接只用于代理转发，不会自动派生账号令牌。站点保存后也会跳到这里继续补充首个 API Key。
+                    API Key 连接只用于代理转发，不会自动派生账号令牌。系统会按站点平台能力自动引导到 Session 或 API Key 创建流程。
                   </div>
                   <ModernSelect
                     value={String(tokenForm.siteId || 0)}
@@ -1483,7 +1484,9 @@ export default function Accounts() {
                 <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                 <div className="empty-state-title">{activeSegment === 'apikey' ? '暂无 API Key 连接' : '暂无 Session 连接'}</div>
                 <div className="empty-state-desc">
-                  {activeSegment === 'apikey' ? '请先添加站点，然后为站点补充 API Key 连接' : '请先添加站点，然后添加 Session 连接'}
+                  {activeSegment === 'apikey'
+                    ? (sites.length > 0 ? '请为现有站点补充 API Key 连接' : '请先添加站点，然后为站点补充 API Key 连接')
+                    : (sites.length > 0 ? '请为现有站点添加 Session 连接' : '请先添加站点，然后添加 Session 连接')}
                 </div>
               </div>
             )}

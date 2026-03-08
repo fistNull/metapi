@@ -87,7 +87,7 @@ async function request(url: string, options: RequestOptions = {}) {
 type TestChatRequestPayload = {
   model: string;
   messages: Array<{ role: string; content: string }>;
-  targetFormat?: 'openai' | 'claude' | 'responses';
+  targetFormat?: 'openai' | 'claude' | 'responses' | 'gemini';
   stream?: boolean;
   temperature?: number;
   top_p?: number;
@@ -95,6 +95,39 @@ type TestChatRequestPayload = {
   frequency_penalty?: number;
   presence_penalty?: number;
   seed?: number;
+};
+
+export type ProxyTestMethod = 'POST' | 'GET' | 'DELETE';
+export type ProxyTestRequestKind = 'json' | 'multipart' | 'empty';
+
+export type ProxyTestMultipartFile = {
+  field: string;
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+};
+
+export type ProxyTestRequestEnvelope = {
+  method: ProxyTestMethod;
+  path: string;
+  requestKind: ProxyTestRequestKind;
+  stream?: boolean;
+  jobMode?: boolean;
+  rawMode?: boolean;
+  jsonBody?: unknown;
+  rawJsonText?: string;
+  multipartFields?: Record<string, string>;
+  multipartFiles?: ProxyTestMultipartFile[];
+};
+
+export type ProxyTestJobResponse = {
+  jobId: string;
+  status: 'pending' | 'succeeded' | 'failed' | 'cancelled';
+  result?: unknown;
+  error?: unknown;
+  createdAt?: string;
+  updatedAt?: string;
+  expiresAt?: string;
 };
 
 export const api = {
@@ -161,17 +194,29 @@ export const api = {
     timeoutMs: wait ? 150_000 : 30_000,
   }),
   getRouteDecision: (model: string) => request(`/api/routes/decision?model=${encodeURIComponent(model)}`),
-  getRouteDecisionsBatch: (models: string[]) => request('/api/routes/decision/batch', {
+  getRouteDecisionsBatch: (models: string[], options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean }) => request('/api/routes/decision/batch', {
     method: 'POST',
-    body: JSON.stringify({ models }),
+    body: JSON.stringify({
+      models,
+      ...(options?.refreshPricingCatalog ? { refreshPricingCatalog: true } : {}),
+      ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
+    }),
   }),
-  getRouteDecisionsByRouteBatch: (items: Array<{ routeId: number; model: string }>) => request('/api/routes/decision/by-route/batch', {
+  getRouteDecisionsByRouteBatch: (items: Array<{ routeId: number; model: string }>, options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean }) => request('/api/routes/decision/by-route/batch', {
     method: 'POST',
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({
+      items,
+      ...(options?.refreshPricingCatalog ? { refreshPricingCatalog: true } : {}),
+      ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
+    }),
   }),
-  getRouteWideDecisionsBatch: (routeIds: number[]) => request('/api/routes/decision/route-wide/batch', {
+  getRouteWideDecisionsBatch: (routeIds: number[], options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean }) => request('/api/routes/decision/route-wide/batch', {
     method: 'POST',
-    body: JSON.stringify({ routeIds }),
+    body: JSON.stringify({
+      routeIds,
+      ...(options?.refreshPricingCatalog ? { refreshPricingCatalog: true } : {}),
+      ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
+    }),
   }),
 
   // Stats
@@ -246,6 +291,7 @@ export const api = {
     }),
   clearRuntimeCache: () => request('/api/settings/maintenance/clear-cache', { method: 'POST' }),
   clearUsageData: () => request('/api/settings/maintenance/clear-usage', { method: 'POST' }),
+  factoryReset: () => request('/api/settings/maintenance/factory-reset', { method: 'POST' }),
   testNotification: () => request('/api/settings/notify/test', { method: 'POST' }),
 
   // Monitor embed
@@ -271,8 +317,48 @@ export const api = {
     request('/api/test/chat/jobs', { method: 'POST', body: JSON.stringify(data) }),
   getTestChatJob: (jobId: string) => request(`/api/test/chat/jobs/${encodeURIComponent(jobId)}`),
   deleteTestChatJob: (jobId: string) => request(`/api/test/chat/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' }),
+  startProxyTestJob: (data: ProxyTestRequestEnvelope) =>
+    request('/api/test/proxy/jobs', { method: 'POST', body: JSON.stringify(data) }),
+  getProxyTestJob: (jobId: string) => request(`/api/test/proxy/jobs/${encodeURIComponent(jobId)}`),
+  deleteProxyTestJob: (jobId: string) => request(`/api/test/proxy/jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' }),
+  testProxy: (data: ProxyTestRequestEnvelope) =>
+    request('/api/test/proxy', { method: 'POST', body: JSON.stringify(data) }),
+  proxyTest: (data: ProxyTestRequestEnvelope) =>
+    request('/api/test/proxy', { method: 'POST', body: JSON.stringify(data) }),
   testChat: (data: TestChatRequestPayload) =>
     request('/api/test/chat', { method: 'POST', body: JSON.stringify(data) }),
+  testProxyStream: async (data: ProxyTestRequestEnvelope, signal?: AbortSignal) => {
+    const token = getAuthToken(localStorage);
+    if (!token) {
+      clearAuthSession(localStorage);
+      throw new Error('Session expired');
+    }
+    return fetch('/api/test/proxy/stream', {
+      method: 'POST',
+      signal,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+  },
+  proxyTestStream: async (data: ProxyTestRequestEnvelope, signal?: AbortSignal) => {
+    const token = getAuthToken(localStorage);
+    if (!token) {
+      clearAuthSession(localStorage);
+      throw new Error('Session expired');
+    }
+    return fetch('/api/test/proxy/stream', {
+      method: 'POST',
+      signal,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+  },
   testChatStream: async (data: TestChatRequestPayload, signal?: AbortSignal) => {
     const token = getAuthToken(localStorage);
     if (!token) {

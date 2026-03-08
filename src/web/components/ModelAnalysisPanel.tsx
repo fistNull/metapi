@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { VChart } from '@visactor/react-vchart';
 import { InlineBrandIcon } from './BrandIcon.js';
+import { formatCompactTokenMetric } from '../numberFormat.js';
 
 type TabKey = 'spend' | 'trend' | 'calls' | 'rank';
 
@@ -135,7 +136,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
         </div>
         <div className="stat-summary-card stat-summary-green">
           <div className="stat-summary-card-label">总 Tokens</div>
-          <div className="stat-summary-card-value">{Math.round(totals.tokens).toLocaleString()}</div>
+          <div className="stat-summary-card-value">{formatCompactTokenMetric(totals.tokens)}</div>
         </div>
       </div>
 

@@ -23,6 +23,7 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'token_routes',
   'route_channels',
   'proxy_logs',
+  'proxy_video_tasks',
   'downstream_api_keys',
   'events',
 ]);
@@ -135,6 +136,49 @@ function ensureTokenManagementSchema() {
   sqlite.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS token_model_availability_token_model_unique
     ON token_model_availability(token_id, model_name);
+  `);
+}
+
+function ensureProxyVideoTaskSchema() {
+  const sqlite = requireSqliteConnection();
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS proxy_video_tasks (
+      id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      public_id text NOT NULL,
+      upstream_video_id text NOT NULL,
+      site_url text NOT NULL,
+      token_value text NOT NULL,
+      requested_model text,
+      actual_model text,
+      channel_id integer,
+      account_id integer,
+      status_snapshot text,
+      upstream_response_meta text,
+      last_upstream_status integer,
+      last_polled_at text,
+      created_at text DEFAULT (datetime('now')),
+      updated_at text DEFAULT (datetime('now'))
+    );
+  `);
+  if (!tableColumnExists('proxy_video_tasks', 'status_snapshot')) {
+    sqlite.exec('ALTER TABLE proxy_video_tasks ADD COLUMN status_snapshot text;');
+  }
+  if (!tableColumnExists('proxy_video_tasks', 'upstream_response_meta')) {
+    sqlite.exec('ALTER TABLE proxy_video_tasks ADD COLUMN upstream_response_meta text;');
+  }
+  if (!tableColumnExists('proxy_video_tasks', 'last_upstream_status')) {
+    sqlite.exec('ALTER TABLE proxy_video_tasks ADD COLUMN last_upstream_status integer;');
+  }
+  if (!tableColumnExists('proxy_video_tasks', 'last_polled_at')) {
+    sqlite.exec('ALTER TABLE proxy_video_tasks ADD COLUMN last_polled_at text;');
+  }
+  sqlite.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS proxy_video_tasks_public_id_unique
+    ON proxy_video_tasks(public_id);
+  `);
+  sqlite.exec(`
+    CREATE INDEX IF NOT EXISTS proxy_video_tasks_upstream_video_id_idx
+    ON proxy_video_tasks(upstream_video_id);
   `);
 }
 
@@ -301,6 +345,14 @@ function ensureRouteGroupingSchema() {
 
   if (!tableColumnExists('token_routes', 'display_icon')) {
     sqlite.exec(`ALTER TABLE token_routes ADD COLUMN display_icon text;`);
+  }
+
+  if (!tableColumnExists('token_routes', 'decision_snapshot')) {
+    sqlite.exec(`ALTER TABLE token_routes ADD COLUMN decision_snapshot text;`);
+  }
+
+  if (!tableColumnExists('token_routes', 'decision_refreshed_at')) {
+    sqlite.exec(`ALTER TABLE token_routes ADD COLUMN decision_refreshed_at text;`);
   }
 
   if (!tableColumnExists('route_channels', 'source_model')) {
@@ -695,6 +747,7 @@ function initSqliteDb() {
   ensureRouteGroupingSchema();
   ensureDownstreamApiKeySchema();
   ensureProxyLogBillingDetailsSchema();
+  ensureProxyVideoTaskSchema();
 
   const rawDb = drizzleSqliteProxy(
     (sqlText, params, method) => sqliteProxyQuery(sqlText, params, method as SqlMethod),

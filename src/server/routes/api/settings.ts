@@ -17,6 +17,7 @@ import {
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { extractClientIp, isIpAllowed } from '../../middleware/auth.js';
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl } from '../../services/siteProxy.js';
+import { performFactoryReset } from '../../services/factoryResetService.js';
 
 type RoutingWeights = typeof config.routingWeights;
 
@@ -909,5 +910,19 @@ export async function settingsRoutes(app: FastifyInstance) {
       message: '占用统计已清理',
       deletedProxyLogs,
     };
+  });
+
+  app.post('/api/settings/maintenance/factory-reset', async (_, reply) => {
+    try {
+      await performFactoryReset();
+      return {
+        success: true,
+      };
+    } catch (err: any) {
+      return reply.code(500).send({
+        success: false,
+        message: err?.message || '重新初始化系统失败',
+      });
+    }
   });
 }

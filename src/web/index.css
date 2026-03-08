@@ -1110,6 +1110,119 @@ body {
   letter-spacing: -0.02em;
 }
 
+.dashboard-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.dashboard-stat-grid .stat-card {
+  min-width: 0;
+}
+
+.dashboard-stat-grid .stat-card-row {
+  min-width: 0;
+}
+
+.dashboard-stat-content {
+  min-width: 0;
+}
+
+.dashboard-stat-grid .stat-label,
+.dashboard-stat-grid .stat-value,
+.dashboard-stat-note {
+  white-space: nowrap;
+}
+
+.dashboard-stat-grid .stat-label {
+  font-size: clamp(11px, 0.85vw, 12px);
+}
+
+.dashboard-stat-grid .stat-value {
+  font-size: clamp(14px, 1.25vw, 18px);
+}
+
+.dashboard-stat-note {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1440px) {
+  .dashboard-stat-grid {
+    gap: 12px;
+  }
+
+  .dashboard-stat-grid .stat-card {
+    padding: 16px;
+  }
+}
+
+@media (max-width: 1200px) {
+  .dashboard-stat-grid {
+    gap: 10px;
+  }
+
+  .dashboard-stat-grid .stat-card {
+    padding: 14px;
+  }
+
+  .dashboard-stat-grid .stat-icon {
+    width: 30px;
+    height: 30px;
+  }
+
+  .dashboard-stat-grid .stat-card-row {
+    gap: 10px;
+  }
+
+  .dashboard-stat-grid .stat-card-header {
+    margin-bottom: 14px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .dashboard-stat-grid {
+    gap: 8px;
+  }
+
+  .dashboard-stat-grid .stat-card {
+    padding: 12px;
+  }
+
+  .dashboard-stat-grid .stat-icon {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+
+  .dashboard-stat-grid .stat-card-row {
+    gap: 8px;
+  }
+
+  .dashboard-stat-grid .stat-card-header {
+    gap: 6px;
+    margin-bottom: 12px;
+    font-size: 12px;
+  }
+
+  .dashboard-stat-grid .stat-card-header svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .dashboard-stat-grid .stat-value {
+    font-size: clamp(12px, 1.4vw, 16px);
+  }
+
+  .dashboard-stat-note {
+    font-size: 10px;
+  }
+}
+
 /* ===== Nav ===== */
 .nav-transition {
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);

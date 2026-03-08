@@ -57,7 +57,7 @@ interface RoutingReferenceCostCacheEntry {
   costs: Map<string, number>;
 }
 
-interface EstimateProxyCostInput {
+export interface EstimateProxyCostInput {
   site: {
     id: number;
     url: string;
@@ -497,6 +497,20 @@ async function getPricingDataCached(input: EstimateProxyCostInput): Promise<Pric
   return data;
 }
 
+async function refreshPricingDataCache(input: EstimateProxyCostInput): Promise<PricingData | null> {
+  const key = getCacheKey(input);
+  const now = Date.now();
+  const data = await fetchPricingData(input);
+  const ttlMs = data ? PRICE_CACHE_TTL_MS : PRICE_CACHE_FAILURE_TTL_MS;
+  pricingCache.set(key, {
+    fetchedAt: now,
+    ttlMs,
+    data,
+  });
+  syncRoutingReferenceCostCache(key, now, ttlMs, data);
+  return data;
+}
+
 export function getCachedModelRoutingReferenceCost(input: {
   siteId: number;
   accountId: number;
@@ -708,10 +722,7 @@ export function calculateModelUsageCost(
   return calculateModelUsageBreakdown(model, usage, groupRatio)?.breakdown.totalCost ?? 0;
 }
 
-export async function fetchModelPricingCatalog(input: EstimateProxyCostInput): Promise<ModelPricingCatalog | null> {
-  const pricingData = await getPricingDataCached(input);
-  if (!pricingData) return null;
-
+function buildModelPricingCatalogFromData(pricingData: PricingData): ModelPricingCatalog {
   const groups = Array.from(new Set([DEFAULT_GROUP, ...Object.keys(pricingData.groupRatio)]));
   const defaultMultiplier = pricingData.groupRatio[DEFAULT_GROUP] || 1;
 
@@ -761,6 +772,18 @@ export async function fetchModelPricingCatalog(input: EstimateProxyCostInput): P
     models,
     groupRatio: pricingData.groupRatio,
   };
+}
+
+export async function fetchModelPricingCatalog(input: EstimateProxyCostInput): Promise<ModelPricingCatalog | null> {
+  const pricingData = await getPricingDataCached(input);
+  if (!pricingData) return null;
+  return buildModelPricingCatalogFromData(pricingData);
+}
+
+export async function refreshModelPricingCatalog(input: EstimateProxyCostInput): Promise<ModelPricingCatalog | null> {
+  const pricingData = await refreshPricingDataCache(input);
+  if (!pricingData) return null;
+  return buildModelPricingCatalogFromData(pricingData);
 }
 
 export function fallbackTokenCost(totalTokens: number, platform: string): number {

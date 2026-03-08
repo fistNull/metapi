@@ -119,4 +119,75 @@ describe('Models marketplace text', () => {
       root?.unmount();
     }
   });
+
+  it('shows newly recognized brands in the marketplace filter panel', async () => {
+    apiMock.getModelsMarketplace.mockResolvedValue({
+      models: [
+        {
+          name: 'nvidia/vila',
+          accountCount: 1,
+          tokenCount: 1,
+          avgLatency: 210,
+          successRate: 97,
+          description: null,
+          tags: [],
+          supportedEndpointTypes: [],
+          pricingSources: [],
+          accounts: [
+            {
+              id: 1,
+              site: '公益站 A',
+              username: 'tester',
+              latency: 210,
+              balance: 6.5,
+              tokens: [{ id: 1, name: 'default', isDefault: true }],
+            },
+          ],
+        },
+        {
+          name: 'deepl-zh-en',
+          accountCount: 1,
+          tokenCount: 1,
+          avgLatency: 160,
+          successRate: 99,
+          description: null,
+          tags: [],
+          supportedEndpointTypes: [],
+          pricingSources: [],
+          accounts: [
+            {
+              id: 2,
+              site: '公益站 B',
+              username: 'tester',
+              latency: 160,
+              balance: 8.8,
+              tokens: [{ id: 2, name: 'default', isDefault: true }],
+            },
+          ],
+        },
+      ],
+    });
+
+    let root: ReturnType<typeof create> | null = null;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const text = collectText(root!.root);
+      expect(text).toContain('NVIDIA');
+      expect(text).toContain('DeepL');
+      expect(text).not.toContain('其他未归类的模型');
+    } finally {
+      root?.unmount();
+    }
+  });
 });

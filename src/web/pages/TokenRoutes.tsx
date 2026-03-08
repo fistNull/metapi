@@ -18,7 +18,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { api } from '../api.js';
-import { InlineBrandIcon, getBrand, hashColor, useIconCdn, type BrandInfo } from '../components/BrandIcon.js';
+import { BrandGlyph, InlineBrandIcon, getBrand, hashColor, normalizeBrandIconKey, type BrandInfo } from '../components/BrandIcon.js';
 import { useToast } from '../components/Toast.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
@@ -81,6 +81,8 @@ type RouteRow = {
   displayName?: string | null;
   displayIcon?: string | null;
   modelMapping?: string | null;
+  decisionSnapshot?: RouteDecision | null;
+  decisionRefreshedAt?: string | null;
   enabled: boolean;
   channels: RouteChannel[];
 };
@@ -128,6 +130,7 @@ type RouteIconOption = {
   value: string;
   label: string;
   description?: string;
+  iconNode?: ReactNode;
   iconUrl?: string;
   iconText?: string;
 };
@@ -294,7 +297,14 @@ function parseBrandIconValue(raw: string): string | null {
   const normalized = (raw || '').trim();
   if (!normalized.startsWith(ROUTE_BRAND_ICON_PREFIX)) return null;
   const icon = normalized.slice(ROUTE_BRAND_ICON_PREFIX.length).trim();
-  return icon || null;
+  return normalizeBrandIconKey(icon);
+}
+
+function normalizeRouteDisplayIconValue(raw: string | null | undefined): string {
+  const normalized = (raw || '').trim();
+  const brandIcon = parseBrandIconValue(normalized);
+  if (brandIcon) return toBrandIconValue(brandIcon);
+  return normalized;
 }
 
 function resolveEndpointTypeIconModel(endpointType: string): string | null {
@@ -687,7 +697,6 @@ function AnimatedCollapseSection({ open, children }: { open: boolean; children: 
 
 export default function TokenRoutes() {
   const navigate = useNavigate();
-  const cdn = useIconCdn();
   const [routes, setRoutes] = useState<RouteRow[]>([]);
   const [modelCandidates, setModelCandidates] = useState<RouteModelCandidatesByModelName>({});
   const [missingTokenModelsByName, setMissingTokenModelsByName] = useState<MissingTokenModelsByName>({});
@@ -734,7 +743,10 @@ export default function TokenRoutes() {
 
   const toast = useToast();
 
-  const loadRouteDecisions = async (routeRows: RouteRow[], options?: { force?: boolean }) => {
+  const loadRouteDecisions = async (
+    routeRows: RouteRow[],
+    options?: { force?: boolean; refreshPricingCatalog?: boolean; persistSnapshots?: boolean },
+  ) => {
     const rows = routeRows || [];
     const exactRoutes = rows.filter((route) => isExactModelPattern(route.modelPattern));
     const wildcardRouteIds = rows
@@ -762,12 +774,20 @@ export default function TokenRoutes() {
     setLoadingDecision(true);
     try {
       setDecisionAutoSkipped(false);
+      const decisionRequestOptions = options?.refreshPricingCatalog
+        ? {
+          refreshPricingCatalog: true as const,
+          ...(options?.persistSnapshots ? { persistSnapshots: true as const } : {}),
+        }
+        : options?.persistSnapshots
+          ? { persistSnapshots: true as const }
+        : undefined;
       const [exactRes, wildcardRes] = await Promise.all([
         requestedModels.length > 0
-          ? api.getRouteDecisionsBatch(requestedModels)
+          ? api.getRouteDecisionsBatch(requestedModels, decisionRequestOptions)
           : Promise.resolve({ decisions: {} }),
         wildcardRouteIds.length > 0
-          ? api.getRouteWideDecisionsBatch(wildcardRouteIds)
+          ? api.getRouteWideDecisionsBatch(wildcardRouteIds, decisionRequestOptions)
           : Promise.resolve({ decisions: {} }),
       ]);
 
@@ -805,10 +825,12 @@ export default function TokenRoutes() {
     setEndpointTypesByModel(candidateRows?.endpointTypesByModel || {});
     const decisionPlaceholder: Record<number, RouteDecision | null> = {};
     for (const route of normalizedRoutes) {
-      decisionPlaceholder[route.id] = null;
+      decisionPlaceholder[route.id] = route.decisionSnapshot || null;
     }
     setDecisionByRoute(decisionPlaceholder);
-    setDecisionAutoSkipped(normalizedRoutes.length > 0);
+    setDecisionAutoSkipped(
+      normalizedRoutes.some((route) => isExactModelPattern(route.modelPattern) && !route.decisionSnapshot),
+    );
   };
 
   useEffect(() => {
@@ -843,7 +865,7 @@ export default function TokenRoutes() {
 
   const handleRefreshRouteDecisions = async () => {
     try {
-      await loadRouteDecisions(routes, { force: true });
+      await loadRouteDecisions(routes, { force: true, refreshPricingCatalog: true, persistSnapshots: true });
       toast.success('路由选择概率已刷新');
     } catch {
       toast.error('刷新路由选择概率失败');
@@ -939,7 +961,7 @@ export default function TokenRoutes() {
     setForm({
       modelPattern: route.modelPattern || '',
       displayName: route.displayName || '',
-      displayIcon: route.displayIcon || '',
+      displayIcon: normalizeRouteDisplayIconValue(route.displayIcon),
     });
     setShowManual(true);
   };
@@ -1109,16 +1131,18 @@ export default function TokenRoutes() {
       value: toBrandIconValue(brand.icon),
       label: brand.name,
       description: `${brand.name} 品牌图标`,
-      iconUrl: `${cdn}/${brand.icon.replace(/\./g, '-')}.png`,
+      iconNode: <BrandGlyph brand={brand} size={14} fallbackText={brand.name} />,
     })),
-  ]), [routeBrandIconCandidates, cdn]);
+  ]), [routeBrandIconCandidates]);
 
   const routeIconOptionValues = useMemo(
     () => new Set(routeIconSelectOptions.map((option) => option.value)),
     [routeIconSelectOptions],
   );
 
-  const routeIconSelectValue = routeIconOptionValues.has(form.displayIcon) ? form.displayIcon : '';
+  const routeIconSelectValue = routeIconOptionValues.has(normalizeRouteDisplayIconValue(form.displayIcon))
+    ? normalizeRouteDisplayIconValue(form.displayIcon)
+    : '';
 
   const groupRouteList = useMemo(() => (
     listVisibleRoutes
@@ -1402,13 +1426,7 @@ export default function TokenRoutes() {
                 onClick={() => setActiveBrand(activeBrand === brandName ? null : brandName)}
               >
                 <span className="filter-item-icon" style={{ background: 'var(--color-bg)', borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <img
-                    src={`${cdn}/${brand.icon.replace(/\./g, '-')}.png`}
-                    alt={brandName}
-                    style={{ width: 14, height: 14, objectFit: 'contain' }}
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                    loading="lazy"
-                  />
+                  <BrandGlyph brand={brand} size={14} fallbackText={brandName} />
                 </span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{brandName}</span>
                 <span className="filter-item-count">{count}</span>
@@ -1463,23 +1481,11 @@ export default function TokenRoutes() {
                   style={{ background: 'var(--color-bg)', borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                 >
                   {groupRoute.icon.kind === 'brand' ? (
-                    <img
-                      src={`${cdn}/${groupRoute.icon.value.replace(/\./g, '-')}.png`}
-                      alt={groupRoute.title}
-                      style={{ width: 14, height: 14, objectFit: 'contain' }}
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                      loading="lazy"
-                    />
+                    <BrandGlyph icon={groupRoute.icon.value} alt={groupRoute.title} size={14} fallbackText={groupRoute.title} />
                   ) : groupRoute.icon.kind === 'text' ? (
                     <span style={{ fontSize: 12, lineHeight: 1 }}>{groupRoute.icon.value}</span>
                   ) : groupRoute.brand ? (
-                    <img
-                      src={`${cdn}/${groupRoute.brand.icon.replace(/\./g, '-')}.png`}
-                      alt={groupRoute.title}
-                      style={{ width: 14, height: 14, objectFit: 'contain' }}
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                      loading="lazy"
-                    />
+                    <BrandGlyph brand={groupRoute.brand} alt={groupRoute.title} size={14} fallbackText={groupRoute.title} />
                   ) : (
                     <InlineBrandIcon model={groupRoute.modelPattern} size={14} />
                   )}
@@ -1972,13 +1978,7 @@ export default function TokenRoutes() {
                         }}
                       >
                         {routeIcon.kind === 'brand' ? (
-                          <img
-                            src={`${cdn}/${routeIcon.value.replace(/\./g, '-')}.png`}
-                            alt={resolveRouteTitle(route)}
-                            style={{ width: 20, height: 20, objectFit: 'contain' }}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            loading="lazy"
-                          />
+                          <BrandGlyph icon={routeIcon.value} alt={resolveRouteTitle(route)} size={20} fallbackText={resolveRouteTitle(route)} />
                         ) : routeIcon.kind === 'text' ? (
                           <span
                             style={{
@@ -1996,13 +1996,7 @@ export default function TokenRoutes() {
                             {routeIcon.value}
                           </span>
                         ) : routeBrand ? (
-                          <img
-                            src={`${cdn}/${routeBrand.icon.replace(/\./g, '-')}.png`}
-                            alt={resolveRouteTitle(route)}
-                            style={{ width: 20, height: 20, objectFit: 'contain' }}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            loading="lazy"
-                          />
+                          <BrandGlyph brand={routeBrand} alt={resolveRouteTitle(route)} size={20} fallbackText={resolveRouteTitle(route)} />
                         ) : (
                           <InlineBrandIcon model={route.modelPattern} size={20} />
                         )}

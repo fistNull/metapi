@@ -9,6 +9,7 @@ import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js'
 import { tr } from '../i18n.js';
 import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
+import { resolveInitialConnectionSegment } from './helpers/defaultConnectionSegment.js';
 import {
   buildSiteSaveAction,
   emptySiteForm,
@@ -207,7 +208,18 @@ export default function Sites() {
         toast.success(`站点 "${payload.name}" 已添加`);
         const createdSiteId = Number(created?.id) || 0;
         if (createdSiteId > 0) {
-          navigate(`/accounts?segment=apikey&create=1&siteId=${createdSiteId}`);
+          const createdPlatform = typeof created?.platform === 'string' && created.platform.trim()
+            ? created.platform.trim()
+            : payload.platform;
+          const initialSegment = resolveInitialConnectionSegment(createdPlatform);
+          const params = new URLSearchParams({
+            create: '1',
+            siteId: String(createdSiteId),
+          });
+          if (initialSegment === 'apikey') {
+            params.set('segment', 'apikey');
+          }
+          navigate(`/accounts?${params.toString()}`);
         }
       } else {
         await api.updateSite(action.id, action.payload);

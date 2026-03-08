@@ -2,7 +2,7 @@
 import { minimatch } from 'minimatch';
 import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
-import { getCachedModelRoutingReferenceCost } from './modelPricingService.js';
+import { getCachedModelRoutingReferenceCost, refreshModelPricingCatalog } from './modelPricingService.js';
 import { type DownstreamRoutingPolicy, EMPTY_DOWNSTREAM_ROUTING_POLICY } from './downstreamPolicyTypes.js';
 
 interface RouteMatch {
@@ -193,6 +193,12 @@ type ExplainSelectionOptions = {
   bypassSourceModelCheck?: boolean;
   useChannelSourceModelForCost?: boolean;
   downstreamPolicy?: DownstreamRoutingPolicy;
+};
+
+type PricingReferenceRefreshOptions = {
+  useChannelSourceModelForCost?: boolean;
+  downstreamPolicy?: DownstreamRoutingPolicy;
+  refreshedKeys?: Set<string>;
 };
 
 type CandidateEligibilityOptions = {
@@ -551,6 +557,38 @@ export class TokenRouter {
     });
   }
 
+  async refreshPricingReferenceCosts(
+    requestedModel: string,
+    options: PricingReferenceRefreshOptions = {},
+  ): Promise<void> {
+    const downstreamPolicy = options.downstreamPolicy ?? DEFAULT_DOWNSTREAM_POLICY;
+    const match = await this.findRoute(requestedModel, downstreamPolicy);
+    await this.refreshPricingReferenceCostsForMatch(match, requestedModel, options);
+  }
+
+  async refreshPricingReferenceCostsForRoute(
+    routeId: number,
+    requestedModel: string,
+    options: PricingReferenceRefreshOptions = {},
+  ): Promise<void> {
+    const downstreamPolicy = options.downstreamPolicy ?? DEFAULT_DOWNSTREAM_POLICY;
+    const match = await this.findRouteById(routeId, downstreamPolicy);
+    await this.refreshPricingReferenceCostsForMatch(match, requestedModel, options);
+  }
+
+  async refreshRouteWidePricingReferenceCosts(
+    routeId: number,
+    options: Omit<PricingReferenceRefreshOptions, 'useChannelSourceModelForCost'> = {},
+  ): Promise<void> {
+    const downstreamPolicy = options.downstreamPolicy ?? DEFAULT_DOWNSTREAM_POLICY;
+    const match = await this.findRouteById(routeId, downstreamPolicy);
+    const requestedModel = match?.route.modelPattern || `route:${routeId}`;
+    await this.refreshPricingReferenceCostsForMatch(match, requestedModel, {
+      ...options,
+      useChannelSourceModelForCost: true,
+    });
+  }
+
   private explainSelectionFromMatch(
     match: RouteMatch | null,
     requestedModel: string,
@@ -718,6 +756,45 @@ export class TokenRouter {
       summary,
       candidates,
     };
+  }
+
+  private async refreshPricingReferenceCostsForMatch(
+    match: RouteMatch | null,
+    requestedModel: string,
+    options: PricingReferenceRefreshOptions = {},
+  ): Promise<void> {
+    if (!match) return;
+
+    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
+    const useChannelSourceModelForCost = (options.useChannelSourceModelForCost ?? false) || requestedByDisplayName;
+    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
+    const refreshedKeys = options.refreshedKeys ?? new Set<string>();
+
+    await Promise.allSettled(match.channels.map(async (candidate) => {
+      const refreshKey = `${candidate.site.id}:${candidate.account.id}`;
+      if (refreshedKeys.has(refreshKey)) return;
+      refreshedKeys.add(refreshKey);
+
+      const modelName = useChannelSourceModelForCost
+        ? (normalizeChannelSourceModel(candidate.channel.sourceModel) || mappedModel)
+        : mappedModel;
+      if (!modelName) return;
+
+      await refreshModelPricingCatalog({
+        site: {
+          id: candidate.site.id,
+          url: candidate.site.url,
+          platform: candidate.site.platform,
+          apiKey: candidate.site.apiKey,
+        },
+        account: {
+          id: candidate.account.id,
+          accessToken: candidate.account.accessToken,
+          apiToken: candidate.account.apiToken,
+        },
+        modelName,
+      });
+    }));
   }
 
   /**

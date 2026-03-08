@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import TokenRoutes from './TokenRoutes.js';
 
-const { apiMock } = vi.hoisted(() => ({
+const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
     getRoutes: vi.fn(),
     getModelTokenCandidates: vi.fn(),
@@ -13,6 +13,7 @@ const { apiMock } = vi.hoisted(() => ({
     updateRoute: vi.fn(),
     addRoute: vi.fn(),
   },
+  getBrandMock: vi.fn(),
 }));
 
 vi.mock('../api.js', () => ({
@@ -20,10 +21,13 @@ vi.mock('../api.js', () => ({
 }));
 
 vi.mock('../components/BrandIcon.js', () => ({
+  BrandGlyph: ({ brand, icon, model }: { brand?: { name?: string } | null; icon?: string | null; model?: string | null }) => (
+    <span>{brand?.name || icon || model || ''}</span>
+  ),
   InlineBrandIcon: ({ model }: { model: string }) => model ? <span>{model}</span> : null,
-  getBrand: () => null,
-  useIconCdn: () => 'https://cdn.test',
+  getBrand: (...args: unknown[]) => getBrandMock(...args),
   hashColor: () => 'linear-gradient(135deg,#4f46e5,#818cf8)',
+  normalizeBrandIconKey: (icon: string) => icon,
 }));
 
 function collectText(node: ReactTestInstance): string {
@@ -60,6 +64,8 @@ async function flushMicrotasks() {
 describe('TokenRoutes grouped source models', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getBrandMock.mockReset();
+    getBrandMock.mockReturnValue(null);
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
@@ -284,6 +290,47 @@ describe('TokenRoutes grouped source models', () => {
       expect(text).toContain('chatgpt');
       expect(text).toContain('gemini');
       expect(text).toContain('claude');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows newly categorized brands in the route brand filter', async () => {
+    getBrandMock.mockImplementation((modelName: string) => {
+      if (String(modelName).includes('nvidia/vila')) {
+        return {
+          name: 'NVIDIA',
+          icon: 'nvidia-color',
+          color: 'linear-gradient(135deg,#76b900,#4a8c0b)',
+        };
+      }
+      return null;
+    });
+    apiMock.getRoutes.mockResolvedValue([
+      {
+        id: 91,
+        modelPattern: 'nvidia/vila',
+        displayName: 'nvidia/vila',
+        enabled: true,
+        channels: [],
+      },
+    ]);
+
+    let root: ReturnType<typeof create> | null = null;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('NVIDIA');
+      expect(collectText(root.root)).not.toContain('查看未归类品牌路由');
     } finally {
       root?.unmount();
     }
