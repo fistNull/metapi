@@ -961,7 +961,6 @@ export default function TokenRoutes() {
       {/* Info tip */}
       <div className="info-tip" style={{ marginBottom: 12 }}>
         {tr('系统会根据模型可用性自动生成路由。精确模型路由会自动过滤只支持该模型的账号和令牌。优先级 P0 最高，数字越大优先级越低。选中概率表示请求到达时该通道被选中的概率。成本来源优先级为：实测成本 → 账号配置成本 → 目录参考价 → 默认回退单价。')}
-        {decisionAutoSkipped ? ` ${tr('当前精确路由')} ${exactRouteCount} ${tr('条，为避免首屏卡顿，默认不自动计算概率，点击"加载选择解释"后按需获取。')}` : ''}
       </div>
 
       {/* Manual route panel */}
