@@ -9,9 +9,40 @@ updates:
       timezone: Asia/Shanghai
     open-pull-requests-limit: 10
     groups:
+      drizzle-risk:
+        patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+      build-tooling:
+        patterns:
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "vitest"
+          - "tsx"
+          - "typescript"
+      routing:
+        patterns:
+          - "react-router-dom"
+      runtime-http:
+        patterns:
+          - "undici"
+      node-runtime-sensitive:
+        patterns:
+          - "cross-env"
       minor-and-patch:
         patterns:
           - "*"
+        exclude-patterns:
+          - "drizzle-orm"
+          - "drizzle-kit"
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "vitest"
+          - "tsx"
+          - "typescript"
+          - "react-router-dom"
+          - "undici"
+          - "cross-env"
         update-types:
           - minor
           - patch
@@ -19,6 +50,15 @@ updates:
         dependency-type: development
         patterns:
           - "*"
+        exclude-patterns:
+          - "drizzle-kit"
+          - "vite"
+          - "@vitejs/plugin-react"
+          - "vitest"
+          - "tsx"
+          - "typescript"
+          - "react-router-dom"
+          - "cross-env"
 
   - package-ecosystem: github-actions
     directory: /
