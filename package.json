@@ -21,6 +21,9 @@
     "url": "git+https://github.com/cita-777/metapi.git"
   },
   "license": "MIT",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "type": "module",
   "scripts": {
     "dev:server": "tsx scripts/dev/run-server.ts --watch",
