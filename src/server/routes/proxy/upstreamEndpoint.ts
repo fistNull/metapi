@@ -437,6 +437,7 @@ export function buildUpstreamEndpointRequest(input: {
 } {
   const sitePlatform = normalizePlatformName(input.sitePlatform);
   const isClaudeUpstream = sitePlatform === 'claude';
+  const isGeminiUpstream = sitePlatform === 'gemini';
 
   const resolveGeminiEndpointPath = (endpoint: UpstreamEndpoint): string => {
     const normalizedSiteUrl = asTrimmedString(input.siteUrl).toLowerCase();
@@ -452,7 +453,7 @@ export function buildUpstreamEndpointRequest(input: {
   };
 
   const resolveEndpointPath = (endpoint: UpstreamEndpoint): string => {
-    if (sitePlatform === 'gemini') {
+    if (isGeminiUpstream) {
       return resolveGeminiEndpointPath(endpoint);
     }
 
@@ -478,6 +479,21 @@ export function buildUpstreamEndpointRequest(input: {
   };
   if (!isClaudeUpstream) {
     commonHeaders.Authorization = `Bearer ${input.tokenValue}`;
+  }
+
+  const openaiBody = { ...input.openaiBody };
+  if (isGeminiUpstream) {
+    const blacklist = [
+      'frequency_penalty',
+      'presence_penalty',
+      'logit_bias',
+      'logprobs',
+      'top_logprobs',
+      'store',
+    ];
+    for (const key of blacklist) {
+      delete openaiBody[key];
+    }
   }
 
   if (input.endpoint === 'messages') {
@@ -514,7 +530,7 @@ export function buildUpstreamEndpointRequest(input: {
     const sanitizedBody = nativeClaudeBody
       ?? normalizedClaudeBody
       ?? sanitizeAnthropicMessagesBody(
-        convertOpenAiBodyToAnthropicMessagesBody(input.openaiBody, input.modelName, input.stream),
+        convertOpenAiBodyToAnthropicMessagesBody(openaiBody, input.modelName, input.stream),
       );
 
     const headers = ensureStreamAcceptHeader({
@@ -542,7 +558,7 @@ export function buildUpstreamEndpointRequest(input: {
           model: input.modelName,
           stream: input.stream,
         }
-        : convertOpenAiBodyToResponsesBodyViaTransformer(input.openaiBody, input.modelName, input.stream)
+        : convertOpenAiBodyToResponsesBodyViaTransformer(openaiBody, input.modelName, input.stream)
     );
     const body = sanitizeResponsesBodyForProxyViaTransformer(rawBody, input.modelName, input.stream);
 
@@ -563,7 +579,7 @@ export function buildUpstreamEndpointRequest(input: {
     path: resolveEndpointPath('chat'),
     headers,
     body: {
-      ...input.openaiBody,
+      ...openaiBody,
       model: input.modelName,
       stream: input.stream,
     },
